@@ -1,0 +1,17 @@
+{
+  "name": "kensei-claude-plugins",
+  "owner": {
+    "name": "Kensei"
+  },
+  "plugins": [
+    {
+      "name": "kensei-statusline",
+      "source": "./plugins/kensei-statusline",
+      "description": "Two-line statusline: model, context, tokens, API cost, subagents, git info, project stats",
+      "version": "1.0.0",
+      "author": {
+        "name": "Kensei"
+      }
+    }
+  ]
+}
