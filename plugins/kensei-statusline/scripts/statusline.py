@@ -290,7 +290,7 @@ def main():
     # Merge all models for total tokens and cost
     all_models = merge_models(main_models, sub_models)
 
-    # Sum tokens for display
+    # Cumulative billed tokens (all categories — charged on every API call)
     total_in = sum(
         m["input"] + m["cache_write"] + m["cache_read"]
         for m in all_models.values()
