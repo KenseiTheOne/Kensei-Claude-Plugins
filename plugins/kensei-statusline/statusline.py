@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import subprocess
+import tempfile
 
 # Force UTF-8 output on Windows
 if sys.platform == "win32":
@@ -77,6 +78,108 @@ def calc_cost(data: dict) -> float:
         cost = (in_tok * p["input"] + out_tok * p["output"]) / 1_000_000
 
     return cost
+
+
+def calc_speed(data: dict) -> str | None:
+    """Calculate output tokens per second."""
+    ctx = data.get("context_window") or {}
+    cost_data = data.get("cost") or {}
+    out_tok = int(ctx.get("total_output_tokens") or 0)
+    api_ms = int(cost_data.get("total_api_duration_ms") or 0)
+    if not out_tok or not api_ms:
+        return None
+    tps = out_tok / (api_ms / 1000)
+    return f"{tps:.0f}"
+
+
+def fmt_lines_changed(data: dict) -> str | None:
+    """Format lines added/removed in session."""
+    cost_data = data.get("cost") or {}
+    added = int(cost_data.get("total_lines_added") or 0)
+    removed = int(cost_data.get("total_lines_removed") or 0)
+    if not added and not removed:
+        return None
+    return f"\033[32m+{added}\033[0m \033[31m-{removed}\033[0m"
+
+
+def get_project_stats(cwd: str) -> str | None:
+    """Get project file count and lines of code."""
+    try:
+        # Get empty tree hash (portable across git versions)
+        empty = subprocess.run(
+            ["git", "hash-object", "-t", "tree", "/dev/null"],
+            capture_output=True, text=True, timeout=2, cwd=cwd,
+        )
+        if empty.returncode != 0:
+            return None
+        empty_tree = empty.stdout.strip()
+
+        # File count + total LOC in one command
+        stat = subprocess.run(
+            ["git", "diff", "--shortstat", empty_tree, "HEAD"],
+            capture_output=True, text=True, timeout=3, cwd=cwd,
+        )
+        if stat.returncode != 0 or not stat.stdout.strip():
+            return None
+
+        import re
+        line = stat.stdout.strip()
+        files_m = re.search(r"(\d+) file", line)
+        ins_m = re.search(r"(\d+) insertion", line)
+        files = int(files_m.group(1)) if files_m else 0
+        loc = int(ins_m.group(1)) if ins_m else 0
+
+        if loc:
+            return f"{files} files {dim_num(loc)} loc"
+        return f"{files} files" if files else None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def dim_num(n: int) -> str:
+    """Format number with K/M suffix."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def get_subagents() -> str | None:
+    """Read active subagents from tracker state file."""
+    state_file = os.path.join(tempfile.gettempdir(), "kensei-statusline", "subagents.json")
+    try:
+        if not os.path.exists(state_file):
+            return None
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        if not state:
+            return None
+
+        # Clean stale entries (>10 min)
+        import time
+        now = int(time.time() * 1000)
+        active = {k: v for k, v in state.items() if now - v.get("started_at", 0) < 600_000}
+        if not active:
+            return None
+
+        # Group by model
+        models: dict[str, int] = {}
+        for entry in active.values():
+            m = entry.get("model") or entry.get("type") or "?"
+            models[m] = models.get(m, 0) + 1
+
+        count = len(active)
+        rst = "\033[0m"
+        parts = f"\033[95m{count} agent{'s' if count != 1 else ''}{rst}"
+        model_parts = []
+        for m, c in sorted(models.items(), key=lambda x: -x[1]):
+            model_parts.append(f"{m}x{c}" if c > 1 else m)
+        if model_parts:
+            parts += f" \033[2m({', '.join(model_parts)}){rst}"
+        return parts
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
 
 
 def get_git_info(cwd: str) -> str | None:
@@ -164,18 +267,29 @@ def main():
     dim = "\033[2m"
     reset = "\033[0m"
 
-    # Line 1: model, context, tokens, cost
+    # Active subagents
+    agents = get_subagents()
+    agents_part = f" {dim}│{reset} {agents}" if agents else ""
+
+    # Line 1: model, context, tokens, cost, agents
     print(
         f"{model} {dim}│{reset} {bar} {pct}% "
         f"{dim}│{reset} \033[36m↑{reset}{fmt_tokens(in_tok)} \033[35m↓{reset}{fmt_tokens(out_tok)} "
         f"{dim}│{reset} ~{cost_str}"
+        f"{agents_part}"
     )
 
-    # Line 2: git info
+    # Line 2: git info + lines changed + project stats
     cwd = data.get("cwd") or data.get("workspace", {}).get("current_dir", "")
     if cwd:
         git_line = get_git_info(cwd)
         if git_line:
+            lines = fmt_lines_changed(data)
+            if lines:
+                git_line += f" {dim}│{reset} {lines}"
+            proj_stats = get_project_stats(cwd)
+            if proj_stats:
+                git_line += f" {dim}│{reset} \033[2m{proj_stats}{reset}"
             print(git_line)
 
 
