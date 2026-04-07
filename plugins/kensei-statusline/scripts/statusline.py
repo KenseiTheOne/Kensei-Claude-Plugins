@@ -6,7 +6,6 @@ import sys
 import os
 import json
 import re
-import time
 import subprocess
 import glob as glob_mod
 
@@ -21,8 +20,6 @@ PRICING = {
     "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.375},
     "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.10},
 }
-
-ACTIVE_AGENT_THRESHOLD_S = 30  # seconds since last write = "active"
 
 
 def get_pricing(model_id: str) -> dict:
@@ -86,47 +83,84 @@ def parse_transcript(filepath: str) -> dict[str, dict]:
     return models
 
 
-def get_subagents(transcript_path: str) -> tuple[list[str], dict[str, dict]]:
-    """Discover subagent transcripts, detect active agents, sum tokens.
-    Returns (active_agent_types, models_dict)."""
-    # Derive subagents dir: /path/to/session_id.jsonl -> /path/to/session_id/subagents/
+def _extract_text(content) -> str:
+    """Extract text from tool_result content (string or list of blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict)
+        )
+    return ""
+
+
+def get_active_agents(transcript_path: str) -> list[str]:
+    """Detect active agents from transcript.
+
+    Foreground agents: active until their tool_result arrives.
+    Background agents: tool_result arrives immediately with "Async agent launched",
+    so they stay active until a queue-operation with <status>completed</status>
+    references their tool-use-id.
+    """
+    agent_calls: dict[str, str] = {}  # tool_use_id -> subagent_type
+    completed: set[str] = set()
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                entry_type = entry.get("type")
+
+                if entry_type == "assistant":
+                    for block in (entry.get("message") or {}).get("content", []):
+                        if block.get("type") == "tool_use" and block.get("name") == "Agent":
+                            tid = block.get("id")
+                            inp = block.get("input") or {}
+                            agent_calls[tid] = inp.get("subagent_type") or inp.get("description") or "?"
+
+                elif entry_type == "user":
+                    msg = entry.get("message")
+                    if not isinstance(msg, dict):
+                        continue
+                    for block in msg.get("content", []):
+                        if not isinstance(block, dict) or block.get("type") != "tool_result":
+                            continue
+                        tid = block.get("tool_use_id", "")
+                        if tid not in agent_calls:
+                            continue
+                        text = _extract_text(block.get("content", ""))
+                        if "Async agent launched" not in text:
+                            completed.add(tid)
+
+                elif entry_type == "queue-operation":
+                    content = entry.get("content") or ""
+                    if "<status>completed</status>" in content:
+                        m = re.search(r"<tool-use-id>(.*?)</tool-use-id>", content)
+                        if m and m.group(1) in agent_calls:
+                            completed.add(m.group(1))
+    except OSError:
+        pass
+
+    return [agent_calls[tid] for tid in agent_calls if tid not in completed]
+
+
+def get_subagent_tokens(transcript_path: str) -> dict[str, dict]:
+    """Sum token usage from all subagent transcripts.
+    Returns { model_id: { input, output, cache_write, cache_read } }."""
     base = transcript_path.rsplit(".", 1)[0]  # strip .jsonl
     subagent_dir = os.path.join(base, "subagents")
 
     if not os.path.isdir(subagent_dir):
-        return [], {}
+        return {}
 
-    now = time.time()
-
-    active_types: list[str] = []
     all_models: dict[str, dict] = {}
 
     for jsonl_path in glob_mod.glob(os.path.join(subagent_dir, "agent-*.jsonl")):
-        fname = os.path.basename(jsonl_path)
-        # Skip compaction files
-        if "acompact" in fname:
+        if "acompact" in os.path.basename(jsonl_path):
             continue
-
-        # Check if active (recently modified)
-        try:
-            mtime = os.path.getmtime(jsonl_path)
-            is_active = (now - mtime) < ACTIVE_AGENT_THRESHOLD_S
-        except OSError:
-            is_active = False
-
-        if is_active:
-            # Read agent type from .meta.json
-            meta_path = jsonl_path.replace(".jsonl", ".meta.json")
-            agent_type = "?"
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                agent_type = meta.get("agentType") or "?"
-            except (OSError, json.JSONDecodeError, ValueError):
-                pass
-            active_types.append(agent_type)
-
-        # Parse tokens from transcript
         agent_models = parse_transcript(jsonl_path)
         for model_id, tokens in agent_models.items():
             if model_id not in all_models:
@@ -135,7 +169,7 @@ def get_subagents(transcript_path: str) -> tuple[list[str], dict[str, dict]]:
             for k in ("input", "output", "cache_write", "cache_read"):
                 m[k] += tokens[k]
 
-    return active_types, all_models
+    return all_models
 
 
 def calc_cost_from_models(models: dict[str, dict]) -> float:
@@ -282,10 +316,9 @@ def main():
     transcript_path = data.get("transcript_path") or ""
     main_models = parse_transcript(transcript_path) if transcript_path else {}
 
-    # Parse subagent transcripts
-    active_types, sub_models = (
-        get_subagents(transcript_path) if transcript_path else ([], {})
-    )
+    # Detect active agents from main transcript, parse subagent tokens
+    active_types = get_active_agents(transcript_path) if transcript_path else []
+    sub_models = get_subagent_tokens(transcript_path) if transcript_path else {}
 
     # Merge all models for total tokens and cost
     all_models = merge_models(main_models, sub_models)
