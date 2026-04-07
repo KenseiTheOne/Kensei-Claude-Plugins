@@ -94,19 +94,23 @@ def _extract_text(content) -> str:
     return ""
 
 
-def get_active_agents(transcript_path: str) -> list[str]:
-    """Detect active agents from transcript.
+def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str]]:
+    """Parse main transcript in a single pass for tokens and active agents.
 
-    Foreground agents: active until their tool_result arrives.
-    Background agents: tool_result arrives immediately with "Async agent launched",
-    so they stay active until a queue-operation with <status>completed</status>
-    references their tool-use-id.
+    Returns (models_dict, active_agent_types).
+
+    Active agent detection:
+    - Foreground agents: active until their tool_result arrives.
+    - Background agents: tool_result arrives immediately with "Async agent launched",
+      so they stay active until a queue-operation references their tool-use-id
+      (completed, error, or any terminal status).
     """
+    models: dict[str, dict] = {}
     agent_calls: dict[str, str] = {}  # tool_use_id -> subagent_type
     completed: set[str] = set()
 
     try:
-        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 try:
                     entry = json.loads(line)
@@ -115,11 +119,25 @@ def get_active_agents(transcript_path: str) -> list[str]:
                 entry_type = entry.get("type")
 
                 if entry_type == "assistant":
-                    for block in (entry.get("message") or {}).get("content", []):
+                    msg = entry.get("message") or {}
+                    # Token usage
+                    usage = msg.get("usage")
+                    if usage:
+                        model = msg.get("model") or "unknown"
+                        if model not in models:
+                            models[model] = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+                        m = models[model]
+                        m["input"] += usage.get("input_tokens") or 0
+                        m["output"] += usage.get("output_tokens") or 0
+                        m["cache_write"] += usage.get("cache_creation_input_tokens") or 0
+                        m["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                    # Agent tool_use detection
+                    for block in msg.get("content", []):
                         if block.get("type") == "tool_use" and block.get("name") == "Agent":
                             tid = block.get("id")
-                            inp = block.get("input") or {}
-                            agent_calls[tid] = inp.get("subagent_type") or inp.get("description") or "?"
+                            if tid:
+                                inp = block.get("input") or {}
+                                agent_calls[tid] = inp.get("subagent_type") or inp.get("description") or "?"
 
                 elif entry_type == "user":
                     msg = entry.get("message")
@@ -137,14 +155,15 @@ def get_active_agents(transcript_path: str) -> list[str]:
 
                 elif entry_type == "queue-operation":
                     content = entry.get("content") or ""
-                    if "<status>completed</status>" in content:
+                    if isinstance(content, str) and "<tool-use-id>" in content:
                         m = re.search(r"<tool-use-id>(.*?)</tool-use-id>", content)
                         if m and m.group(1) in agent_calls:
                             completed.add(m.group(1))
     except OSError:
         pass
 
-    return [agent_calls[tid] for tid in agent_calls if tid not in completed]
+    active = [agent_calls[tid] for tid in agent_calls if tid not in completed]
+    return models, active
 
 
 def get_subagent_tokens(transcript_path: str) -> dict[str, dict]:
@@ -312,12 +331,11 @@ def main():
     ctx = data.get("context_window") or {}
     pct = int(ctx.get("used_percentage") or 0)
 
-    # Parse main transcript for accurate cumulative tokens
+    # Parse main transcript in single pass: tokens + active agents
     transcript_path = data.get("transcript_path") or ""
-    main_models = parse_transcript(transcript_path) if transcript_path else {}
-
-    # Detect active agents from main transcript, parse subagent tokens
-    active_types = get_active_agents(transcript_path) if transcript_path else []
+    main_models, active_types = (
+        parse_main_transcript(transcript_path) if transcript_path else ({}, [])
+    )
     sub_models = get_subagent_tokens(transcript_path) if transcript_path else {}
 
     # Merge all models for total tokens and cost
