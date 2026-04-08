@@ -48,7 +48,7 @@ Add or replace the `statusLine` key:
 ```json
 "statusLine": {
   "type": "command",
-  "command": "python \"<absolute-path-to-wrapper>\""
+  "command": "python3 \"<absolute-path-to-wrapper>\""
 }
 ```
 
