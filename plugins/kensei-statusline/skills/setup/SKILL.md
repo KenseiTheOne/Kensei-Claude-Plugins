@@ -37,7 +37,7 @@ import runpy
 
 CACHE = os.path.join(
     os.path.expanduser("~"), ".claude", "plugins", "cache",
-    "kensei-claude-plugins", "statusline",
+    "kensei-claude-plugins", "kensei-statusline",
 )
 
 if os.path.isdir(CACHE):

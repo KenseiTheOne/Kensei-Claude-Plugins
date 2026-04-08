@@ -28,6 +28,6 @@ print(
     "[statusline-plugin] The kensei-statusline plugin is enabled but statusLine "
     "is not configured in settings.json. Ask the user if they'd like to set up "
     "the custom statusline (shows model, context, tokens, cost, git info). "
-    "If yes, run /statusline:setup. If the user declines, create the file "
+    "If yes, run /kensei-statusline:setup. If the user declines, create the file "
     f'"{dismiss_path}" so they are not asked again.'
 )
