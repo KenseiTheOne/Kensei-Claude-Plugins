@@ -8,19 +8,7 @@ trigger: Use when the user wants to set up, reconfigure, or reinstall the status
 
 Configure the kensei-statusline plugin as the active Claude Code statusline.
 
-## Step 1 — Confirm with user
-
-Ask the user if they want to install kensei-statusline as their Claude Code statusline. Briefly explain what it shows:
-- Model name, context usage bar with color coding
-- Token counts (input/output) with cache breakdown
-- Estimated API cost (exact when reported by Claude Code, estimated otherwise)
-- Active subagent count and types
-- Git branch, staged/modified/untracked counts, ahead/behind
-- Project file count and lines of code
-
-If the user **declines**: create a marker file at `~/.claude/.statusline-no-setup` (so they won't be asked again on session start) and stop.
-
-## Step 2 — Create wrapper script
+## Step 1 — Create wrapper script
 
 Create the directory `~/.claude/scripts/` if it doesn't exist.
 
@@ -51,7 +39,7 @@ if os.path.isdir(CACHE):
 print("...")
 ```
 
-## Step 3 — Update settings.json
+## Step 2 — Update settings.json
 
 Read `~/.claude/settings.json`. Determine the absolute path to the wrapper using the user's home directory (e.g., `C:/Users/Username/.claude/scripts/kensei-statusline.py` on Windows, `/home/username/.claude/scripts/kensei-statusline.py` on Linux/macOS).
 
@@ -68,6 +56,6 @@ Use the Edit tool to modify the file. If `statusLine` already exists, replace it
 
 Also remove the dismiss marker `~/.claude/.statusline-no-setup` if it exists (user is explicitly re-running setup).
 
-## Step 4 — Confirm
+## Step 3 — Confirm
 
 Tell the user the statusline is configured. They need to restart Claude Code (`/exit` and start a new session) for it to take effect.
