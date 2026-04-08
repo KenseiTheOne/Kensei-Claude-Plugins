@@ -19,18 +19,18 @@ Then install any plugin:
 | Plugin | Description |
 |--------|-------------|
 | [statusline](plugins/statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
-| [skills](plugins/skills/) | Skill collection — Unity review, and more to come |
+| [toolkit](plugins/toolkit/) | Skill collection — Unity review, and more to come |
 
-### skills
+### toolkit
 
 | Skill | Command | Description |
 |-------|---------|-------------|
-| [unity-review](plugins/skills/skills/unity-review/) | `/skills:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
+| [unity-review](plugins/toolkit/skills/unity-review/) | `/toolkit:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
 
 ## Structure
 
 ```
 .claude-plugin/                 — Marketplace manifest
-plugins/statusline/      — Statusline plugin (hooks)
-plugins/skills/skills/   — Skill collection (unity-review, ...)
+plugins/statusline/             — Statusline plugin (hooks)
+plugins/toolkit/skills/         — Skill collection (unity-review, ...)
 ```

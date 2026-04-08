@@ -14,8 +14,8 @@
       }
     },
     {
-      "name": "skills",
-      "source": "./plugins/skills",
+      "name": "toolkit",
+      "source": "./plugins/toolkit",
       "description": "Skill collection — Unity review, and more to come",
       "version": "1.0.0",
       "author": {
