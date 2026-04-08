@@ -5,8 +5,8 @@
   },
   "plugins": [
     {
-      "name": "statusline",
-      "source": "./plugins/statusline",
+      "name": "kensei-statusline",
+      "source": "./plugins/kensei-statusline",
       "description": "Two-line statusline: model, context, tokens, API cost, subagents, git info, project stats",
       "version": "1.0.0",
       "author": {
@@ -14,8 +14,8 @@
       }
     },
     {
-      "name": "toolkit",
-      "source": "./plugins/toolkit",
+      "name": "kensei-toolkit",
+      "source": "./plugins/kensei-toolkit",
       "description": "Skill collection — Unity review, and more to come",
       "version": "1.0.0",
       "author": {
