@@ -1,5 +1,5 @@
 ---
-name: statusline-setup
+name: setup
 description: Configure the kensei-statusline in your Claude Code settings
 trigger: Use when the user wants to set up, reconfigure, or reinstall the statusline plugin
 ---
