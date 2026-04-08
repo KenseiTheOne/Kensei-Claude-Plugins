@@ -1,0 +1,11 @@
+{
+  "name": "skills",
+  "version": "1.0.0",
+  "description": "Skill collection — Unity review, and more to come",
+  "author": {
+    "name": "Kensei"
+  },
+  "repository": "https://github.com/KenseiTheOne/Kensei-Claude-Plugins",
+  "license": "MIT",
+  "keywords": ["skills", "unity", "code-review"]
+}

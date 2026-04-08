@@ -1,5 +1,5 @@
 {
-  "name": "kensei-statusline",
+  "name": "statusline",
   "version": "1.0.0",
   "description": "Two-line statusline: model, context, tokens, API cost, subagents, git info, project stats",
   "author": {

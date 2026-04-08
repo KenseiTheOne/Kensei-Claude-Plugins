@@ -18,12 +18,19 @@ Then install any plugin:
 
 | Plugin | Description |
 |--------|-------------|
-| [kensei-statusline](plugins/kensei-statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
+| [statusline](plugins/statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
+| [skills](plugins/skills/) | Skill collection — Unity review, and more to come |
+
+### skills
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| [unity-review](plugins/skills/skills/unity-review/) | `/skills:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
 
 ## Structure
 
 ```
-.claude-plugin/       — Marketplace manifest
-plugins/              — Plugin packages
-skills/               — Standalone skills
+.claude-plugin/                 — Marketplace manifest
+plugins/statusline/      — Statusline plugin (hooks)
+plugins/skills/skills/   — Skill collection (unity-review, ...)
 ```
