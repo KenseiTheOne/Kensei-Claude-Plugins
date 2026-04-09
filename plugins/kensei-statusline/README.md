@@ -26,29 +26,25 @@ main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 ## Requirements
 
 - Python 3.8+
-- Node.js (for subagent tracker hook)
 
 ## Installation
-
-### As a plugin (recommended)
 
 ```bash
 /plugin marketplace add KenseiTheOne/Kensei-Claude-Plugins
 /plugin install kensei-statusline@kensei-claude-plugins
 ```
 
-### Manual
+On first session after install, a `SessionStart` hook runs `/kensei-statusline:setup` automatically — it writes a wrapper to `~/.claude/scripts/kensei-statusline.py` and patches `~/.claude/settings.json`. Restart Claude Code (`/exit`) for the statusline to take effect.
 
-Add to `~/.claude/settings.json`:
+To re-run setup manually (e.g. after editing `settings.json`):
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "python \"/path/to/kensei-statusline/scripts/statusline.py\""
-  }
-}
+```bash
+/kensei-statusline:setup
 ```
+
+### Why a wrapper?
+
+The plugin cache path includes a version (`~/.claude/plugins/cache/kensei-claude-plugins/kensei-statusline/<version>/...`), so a hardcoded path would break on every update. The wrapper resolves the latest cached version dynamically.
 
 ## API Pricing
 

@@ -18,19 +18,27 @@ Then install any plugin:
 
 | Plugin | Description |
 |--------|-------------|
-| [statusline](plugins/statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
-| [toolkit](plugins/toolkit/) | Skill collection — Unity review, and more to come |
+| [kensei-statusline](plugins/kensei-statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
+| [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — Unity review, and more to come |
 
-### toolkit
+### kensei-statusline
 
 | Skill | Command | Description |
 |-------|---------|-------------|
-| [unity-review](plugins/toolkit/skills/unity-review/) | `/toolkit:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
+| [setup](plugins/kensei-statusline/skills/setup/) | `/kensei-statusline:setup` | Configure the statusline in `~/.claude/settings.json` |
+
+A `SessionStart` hook auto-runs setup once when the plugin is first installed.
+
+### kensei-toolkit
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| [unity-review](plugins/kensei-toolkit/skills/unity-review/) | `/kensei-toolkit:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
 
 ## Structure
 
 ```
-.claude-plugin/                 — Marketplace manifest
-plugins/statusline/             — Statusline plugin (hooks)
-plugins/toolkit/skills/         — Skill collection (unity-review, ...)
+.claude-plugin/                          — Marketplace manifest
+plugins/kensei-statusline/               — Statusline plugin (hook + setup skill)
+plugins/kensei-toolkit/skills/           — Skill collection (unity-review, ...)
 ```
