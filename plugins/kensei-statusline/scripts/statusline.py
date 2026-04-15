@@ -94,10 +94,11 @@ def _extract_text(content) -> str:
     return ""
 
 
-def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str]]:
+def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str], int]:
     """Parse main transcript in a single pass for tokens and active agents.
 
-    Returns (models_dict, active_agent_types).
+    Returns (models_dict, active_agent_types, last_input_total).
+    last_input_total = most recent API call's total prompt tokens (current context size).
 
     Active agent detection:
     - Foreground agents: active until their tool_result arrives.
@@ -108,6 +109,7 @@ def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str]]:
     models: dict[str, dict] = {}
     agent_calls: dict[str, str] = {}  # tool_use_id -> subagent_type
     completed: set[str] = set()
+    last_input_total = 0
 
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
@@ -127,10 +129,15 @@ def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str]]:
                         if model not in models:
                             models[model] = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
                         m = models[model]
-                        m["input"] += usage.get("input_tokens") or 0
-                        m["output"] += usage.get("output_tokens") or 0
-                        m["cache_write"] += usage.get("cache_creation_input_tokens") or 0
-                        m["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                        inp = usage.get("input_tokens") or 0
+                        out = usage.get("output_tokens") or 0
+                        cw = usage.get("cache_creation_input_tokens") or 0
+                        cr = usage.get("cache_read_input_tokens") or 0
+                        m["input"] += inp
+                        m["output"] += out
+                        m["cache_write"] += cw
+                        m["cache_read"] += cr
+                        last_input_total = inp + cw + cr
                     # Agent tool_use detection
                     for block in msg.get("content", []):
                         if block.get("type") == "tool_use" and block.get("name") == "Agent":
@@ -163,7 +170,7 @@ def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str]]:
         pass
 
     active = [agent_calls[tid] for tid in agent_calls if tid not in completed]
-    return models, active
+    return models, active, last_input_total
 
 
 def get_subagent_tokens(transcript_path: str) -> dict[str, dict]:
@@ -333,19 +340,14 @@ def main():
 
     # Parse main transcript in single pass: tokens + active agents
     transcript_path = data.get("transcript_path") or ""
-    main_models, active_types = (
-        parse_main_transcript(transcript_path) if transcript_path else ({}, [])
+    main_models, active_types, current_input = (
+        parse_main_transcript(transcript_path) if transcript_path else ({}, [], 0)
     )
     sub_models = get_subagent_tokens(transcript_path) if transcript_path else {}
 
     # Merge all models for total tokens and cost
     all_models = merge_models(main_models, sub_models)
 
-    # Cumulative billed tokens (all categories — charged on every API call)
-    total_in = sum(
-        m["input"] + m["cache_write"] + m["cache_read"]
-        for m in all_models.values()
-    )
     total_out = sum(m["output"] for m in all_models.values())
 
     # Cost: prefer Claude Code's reported cost, fall back to our calculation
@@ -380,7 +382,7 @@ def main():
     # Line 1: model, context, tokens, cost, agents
     print(
         f"{model} {dim}\u2502{rst} {bar} {pct}% "
-        f"{dim}\u2502{rst} \033[36m\u2191{rst}{fmt_tokens(total_in)} \033[35m\u2193{rst}{fmt_tokens(total_out)} "
+        f"{dim}\u2502{rst} \033[36m\u2191{rst}{fmt_tokens(current_input)} \033[35m\u2193{rst}{fmt_tokens(total_out)} "
         f"{dim}\u2502{rst} {cost_str}"
         f"{agents_part}"
     )

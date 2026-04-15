@@ -12,7 +12,7 @@ main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 **Line 1:**
 - **Model** — current model name
 - **Context bar** — green (<50%), yellow (50-80%), red (>80%)
-- **↑ / ↓** — input / output tokens for the session
+- **↑ / ↓** — current context input tokens / cumulative output tokens
 - **~$X.XX** — estimated Anthropic API cost
 - **N agents** — active subagents grouped by model
 
