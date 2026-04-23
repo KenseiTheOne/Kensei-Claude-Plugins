@@ -1,56 +1,24 @@
 ---
 name: unity-review
 description: Senior+ Unity code review with parallel specialized agents. Modes — Quick, Performance, Architecture, Full.
-trigger: Use when the user wants a Unity code review, C# game code audit, or types /unity-review
-arguments:
-  - name: path
-    description: Optional path or glob to review (defaults to recent changes)
+argument-hint: [quick | performance | architecture | full] [path/glob]
 ---
 
 # Unity Review — Senior+ Code Audit
 
-You are orchestrating a senior-level Unity/C# code review. Follow these steps exactly.
+You are orchestrating a senior-level Unity/C# code review. Follow these steps **in order** — do not skip Step 1.
 
-## Step 1 — Determine scope
+## Step 1 — Choose review mode (MANDATORY, BLOCKING)
 
-If the user provided a `$ARGUMENTS` path, use it. Otherwise, detect scope automatically:
+Parse `$ARGUMENTS` for a mode keyword: `quick`, `performance`, `architecture`, or `full` (case-insensitive).
 
-1. Check for changes in this order (take the first non-empty result):
-   - `git diff --name-only` (unstaged changes)
-   - `git diff --cached --name-only` (staged changes)
-   - `git diff --name-only HEAD~1` (last commit)
-2. Filter to relevant files: `*.cs`, `*.shader`, `*.hlsl`, `*.compute`, `*.asmdef`
-3. Include files under both `Assets/` and `Packages/` (custom packages)
-4. If no changes found, ask the user what to review
-
-## Step 2 — Detect project context
-
-Before launching agents, auto-detect project context by reading available files. This context is passed to every agent.
-
-```
-Detect and report:
-- UNITY VERSION: read ProjectSettings/ProjectVersion.txt
-- RENDER PIPELINE: grep for UniversalRenderPipelineAsset / HDRenderPipelineAsset
-  in ProjectSettings/GraphicsSettings.asset, or check Packages/manifest.json
-  for com.unity.render-pipelines.* — report URP / HDRP / Built-in
-- TARGET PLATFORM: read EditorUserBuildSettings in ProjectSettings/EditorBuildSettings.asset
-  or Library/EditorUserBuildSettings.asset — report Mobile / PC / Console / WebGL
-- DI FRAMEWORK: check Packages/manifest.json or Assets/ for Zenject / VContainer / other
-- ECS/DOTS: check for com.unity.entities in Packages/manifest.json
-
-If a file is missing, report "Unknown" for that field — do not fail.
-
-Format as a context block:
-  Unity: 2022.3.20f1 | URP | Mobile+PC | VContainer | No DOTS
-```
-
-## Step 3 — Choose review mode
-
-Use `AskUserQuestion` to present the review mode with `preview` on each option:
+- If a mode keyword is present in `$ARGUMENTS`, use it and skip to Step 2.
+- Otherwise, you **MUST** call `AskUserQuestion` **before any other tool call** (no `Read`, no `Bash`, no `Glob` first). Wait for the user's answer before proceeding. Do not auto-pick a mode.
 
 ```
 Question: "Which review mode?"
 Header: "Mode"
+multiSelect: false
 Options:
   - label: "Quick (Recommended)"
     description: "Fast senior-level scan — code quality + bug hunting"
@@ -86,11 +54,44 @@ Options:
         6. Security      — data safety, injection, asset exposure
 ```
 
+## Step 2 — Determine scope
+
+If `$ARGUMENTS` contains a path/glob (anything that isn't a mode keyword), use it. Otherwise, detect scope automatically:
+
+1. Check for changes in this order (take the first non-empty result):
+   - `git diff --name-only` (unstaged changes)
+   - `git diff --cached --name-only` (staged changes)
+   - `git diff --name-only HEAD~1` (last commit)
+2. Filter to relevant files: `*.cs`, `*.shader`, `*.hlsl`, `*.compute`, `*.asmdef`
+3. Include files under both `Assets/` and `Packages/` (custom packages)
+4. If no changes found, ask the user what to review
+
+## Step 3 — Detect project context
+
+Before launching agents, auto-detect project context by reading available files. This context is passed to every agent.
+
+```
+Detect and report:
+- UNITY VERSION: read ProjectSettings/ProjectVersion.txt
+- RENDER PIPELINE: grep for UniversalRenderPipelineAsset / HDRenderPipelineAsset
+  in ProjectSettings/GraphicsSettings.asset, or check Packages/manifest.json
+  for com.unity.render-pipelines.* — report URP / HDRP / Built-in
+- TARGET PLATFORM: read EditorUserBuildSettings in ProjectSettings/EditorBuildSettings.asset
+  or Library/EditorUserBuildSettings.asset — report Mobile / PC / Console / WebGL
+- DI FRAMEWORK: check Packages/manifest.json or Assets/ for Zenject / VContainer / other
+- ECS/DOTS: check for com.unity.entities in Packages/manifest.json
+
+If a file is missing, report "Unknown" for that field — do not fail.
+
+Format as a context block:
+  Unity: 2022.3.20f1 | URP | Mobile+PC | VContainer | No DOTS
+```
+
 ## Step 4 — Launch agents
 
-Spawn agents **in parallel** using the Agent tool based on the selected mode. Every agent receives:
-- The file list from Step 1
-- The project context from Step 2
+Spawn agents **in parallel** using the Agent tool based on the mode selected in Step 1. Every agent receives:
+- The file list from Step 2
+- The project context from Step 3
 - The shared preamble and severity rubric below
 - Their specific focus area prompt
 
@@ -99,7 +100,7 @@ Spawn agents **in parallel** using the Agent tool based on the selected mode. Ev
 ```
 You are a senior Unity/C# engineer conducting a code review.
 
-PROJECT CONTEXT: {context from Step 2}
+PROJECT CONTEXT: {context from Step 3}
 
 QUALITY BAR: Only report issues that a senior or staff engineer would flag.
 Skip trivial style nits. Focus on correctness, maintainability, performance,
@@ -282,7 +283,7 @@ If agents give different health scores:
 
 ```markdown
 # Unity Review — [MODE] Mode
-## Project: {context from Step 2}
+## Project: {context from Step 3}
 
 ## Overall Health: X/10
 
