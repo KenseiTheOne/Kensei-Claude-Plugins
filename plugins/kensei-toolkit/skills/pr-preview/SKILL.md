@@ -2,7 +2,7 @@
 name: pr-preview
 description: Render proposed changes as a Pull Request preview in a markdown file with red/green diff highlighting, like on GitHub. Use when the user wants to review changes before applying them, or wants a PR-style summary of a set of edits.
 disable-model-invocation: true
-argument-hint: [task description | path to save PR.md]
+argument-hint: "[task description | path to save PR.md]"
 ---
 
 Produce a Pull Request–style markdown document describing the changes for: $ARGUMENTS

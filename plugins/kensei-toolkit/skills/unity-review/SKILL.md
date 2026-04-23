@@ -1,7 +1,7 @@
 ---
 name: unity-review
 description: Senior+ Unity code review with parallel specialized agents. Modes — Quick, Performance, Architecture, Full.
-argument-hint: [quick | performance | architecture | full] [path/glob]
+argument-hint: "[quick | performance | architecture | full] [path/glob]"
 ---
 
 # Unity Review — Senior+ Code Audit
