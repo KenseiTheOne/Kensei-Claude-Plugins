@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR Preview — standalone HTML demo</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --panel: #f6f8fa;
+    --add-bg: #dafbe1;
+    --add-gutter: #aceebb;
+    --add-num: #1a7f37;
+    --del-bg: #ffebe9;
+    --del-gutter: #ffcecb;
+    --del-num: #cf222e;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #7d8590;
+      --border: #30363d;
+      --panel: #161b22;
+      --add-bg: #033a16;
+      --add-gutter: #0f5323;
+      --add-num: #3fb950;
+      --del-bg: #67060c;
+      --del-gutter: #8e1519;
+      --del-num: #f85149;
+    }
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    max-width: 1200px;
+    margin: 24px auto;
+    padding: 0 24px;
+    line-height: 1.5;
+  }
+  h1 { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h2 { margin-top: 32px; }
+  h3 { margin-top: 24px; color: var(--muted); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .filename {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--panel);
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    color: var(--muted);
+  }
+
+  /* ---------- diff table (unselectable gutter via CSS counter) ---------- */
+  .diff {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0 0 6px 6px;
+    margin: 0 0 24px 0;
+    counter-reset: old new;
+    overflow: hidden;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 50px 50px 1fr;
+    white-space: pre;
+    font-family: var(--mono);
+  }
+  .row .num {
+    color: var(--muted);
+    text-align: right;
+    padding: 0 10px 0 0;
+    user-select: none;          /* belt */
+    -webkit-user-select: none;  /* and suspenders */
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+  }
+  .row .num::before { content: counter(var(--counter)); }
+  .row .num.old { --counter: old; }
+  .row .num.new { --counter: new; }
+  .row .code { padding: 0 10px; }
+
+  .row.ctx { counter-increment: old new; }
+
+  .row.add { background: var(--add-bg); counter-increment: new; }
+  .row.add .num { background: var(--add-gutter); color: var(--add-num); }
+  .row.add .num.old::before { content: ""; }   /* blank old column */
+
+  .row.del { background: var(--del-bg); counter-increment: old; }
+  .row.del .num { background: var(--del-gutter); color: var(--del-num); }
+  .row.del .num.new::before { content: ""; }   /* blank new column */
+
+  /* hunk header row */
+  .row.hunk {
+    background: #ddf4ff;
+    color: #0969da;
+    grid-template-columns: 100px 1fr;
+    padding: 2px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  @media (prefers-color-scheme: dark) {
+    .row.hunk { background: #0c2d6b; color: #58a6ff; }
+  }
+  .row.hunk .num { background: transparent; border: none; color: inherit; user-select: none; -webkit-user-select: none; text-align: center; }
+  .row.hunk .num::before { content: "…"; }
+
+  /* ---------- split layout ---------- */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+  }
+  .split .side {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg);
+    counter-reset: n;
+    overflow-x: auto;
+  }
+  .split .side .srow {
+    display: grid;
+    grid-template-columns: 50px 1fr;
+    white-space: pre;
+  }
+  .split .side .srow .num {
+    color: var(--muted);
+    text-align: right;
+    padding: 0 10px 0 0;
+    user-select: none;
+    -webkit-user-select: none;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+  }
+  .split .side .srow .num::before { counter-increment: n; content: counter(n); }
+  .split .side .srow.blank .num::before { content: ""; }
+  .split .side .srow.blank { background: var(--panel); }
+  .split .side .srow.blank .code { opacity: 0.4; }
+  .split .side .srow.add { background: var(--add-bg); }
+  .split .side .srow.add .num { background: var(--add-gutter); color: var(--add-num); }
+  .split .side .srow.del { background: var(--del-bg); }
+  .split .side .srow.del .num { background: var(--del-gutter); color: var(--del-num); }
+  .split .side .srow .code { padding: 0 10px; }
+  .split .side .sheader {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* custom start line per block */
+  .start-at-1   { counter-reset: old 0 new 0; }
+  .start-at-4-4 { counter-reset: old 3 new 3; }
+
+  /* minor syntax hinting (keywords / strings) without bringing in a highlighter */
+  .k { color: #cf222e; }
+  .s { color: #0a3069; }
+  .c { color: var(--muted); font-style: italic; }
+  @media (prefers-color-scheme: dark) {
+    .k { color: #ff7b72; }
+    .s { color: #a5d6ff; }
+  }
+
+  .note {
+    background: var(--panel);
+    border-left: 3px solid var(--muted);
+    padding: 10px 14px;
+    font-size: 14px;
+    margin: 12px 0 24px;
+  }
+  .note strong { color: var(--fg); }
+
+  ul.tests { background: var(--panel); padding: 12px 16px 12px 36px; border-radius: 6px; }
+
+  /* ---------- view toggle (pure CSS) ---------- */
+  .view-radio { position: absolute; opacity: 0; pointer-events: none; }
+  .view-toggle {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+    margin: 0 0 20px 0;
+    gap: 2px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .view-toggle label {
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--muted);
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+  }
+  .view-toggle label:hover { color: var(--fg); }
+  #view-unified:checked ~ .view-toggle label[for="view-unified"],
+  #view-split:checked ~ .view-toggle label[for="view-split"] {
+    background: var(--bg);
+    color: var(--fg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  @media (prefers-color-scheme: dark) {
+    #view-unified:checked ~ .view-toggle label[for="view-unified"],
+    #view-split:checked ~ .view-toggle label[for="view-split"] {
+      background: #30363d;
+      box-shadow: none;
+    }
+  }
+
+  /* toggle visibility */
+  #view-unified:checked ~ .files .mode-split { display: none; }
+  #view-split:checked ~ .files .mode-unified { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Fix greeting to handle empty name</h1>
+
+<h2>Summary</h2>
+<p><code>greet()</code> throws on empty input because it assumes <code>name</code> is always a non-empty string. This PR adds a guard and falls back to <code>"stranger"</code>.</p>
+
+<h2>Changes</h2>
+<ul>
+  <li><code>src/greet.js</code> — guard against empty/undefined <code>name</code>, default to <code>"stranger"</code></li>
+  <li><code>src/greet.js</code> — trim whitespace before the length check</li>
+</ul>
+
+<h2>Files changed</h2>
+
+<div class="note">
+  <strong>Try it:</strong> drag your cursor across any code block below and press <kbd>Ctrl+C</kbd> (or <kbd>⌘C</kbd>). Paste into a text editor. The line numbers never show up — they're rendered by CSS <code>::before</code> pseudo-elements and are not part of the document text.
+</div>
+
+<input type="radio" name="view" id="view-unified" class="view-radio" checked>
+<input type="radio" name="view" id="view-split" class="view-radio">
+
+<div class="view-toggle">
+  <label for="view-unified">Unified</label>
+  <label for="view-split">Split</label>
+</div>
+
+<div class="files">
+
+<div class="mode-unified">
+<div class="filename">src/greet.js</div>
+<div class="diff start-at-1">
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"><span class="c">// Tiny greeting helper used by the CLI and the web entry point.</span></span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"><span class="c">// Keep this module dependency-free so it can run in any environment.</span></span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"> </span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
+  <div class="row del"><span class="num old"></span><span class="num new"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${name}!`</span>;</span></div>
+  <div class="row add"><span class="num old"></span><span class="num new"></span><span class="code">  <span class="k">const</span> safe = (name ?? <span class="s">""</span>).trim();</span></div>
+  <div class="row add"><span class="num old"></span><span class="num new"></span><span class="code">  <span class="k">if</span> (!safe) <span class="k">return</span> <span class="s">"Hello, stranger!"</span>;</span></div>
+  <div class="row add"><span class="num old"></span><span class="num new"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${safe}!`</span>;</span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code">}</span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"> </span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code"><span class="k">export function</span> farewell(name) {</span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code">  <span class="k">return</span> <span class="s">`Goodbye, ${name}!`</span>;</span></div>
+  <div class="row ctx"><span class="num old"></span><span class="num new"></span><span class="code">}</span></div>
+</div>
+</div>
+
+<div class="mode-split">
+<div class="filename">src/greet.js</div>
+<div class="split">
+  <div class="side start-at-4-4">
+    <div class="sheader">Before</div>
+    <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
+    <div class="srow del"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${name}!`</span>;</span></div>
+    <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+    <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+    <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+  </div>
+  <div class="side start-at-4-4">
+    <div class="sheader">After</div>
+    <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
+    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">const</span> safe = (name ?? <span class="s">""</span>).trim();</span></div>
+    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">if</span> (!safe) <span class="k">return</span> <span class="s">"Hello, stranger!"</span>;</span></div>
+    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${safe}!`</span>;</span></div>
+    <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+  </div>
+</div>
+</div>
+
+</div><!-- /.files -->
+
+<h2>Test plan</h2>
+<ul class="tests">
+  <li><input type="checkbox"> <code>greet("Kensei")</code> → <code>"Hello, Kensei!"</code></li>
+  <li><input type="checkbox"> <code>greet("")</code> → <code>"Hello, stranger!"</code></li>
+  <li><input type="checkbox"> <code>greet("   ")</code> → <code>"Hello, stranger!"</code></li>
+  <li><input type="checkbox"> <code>greet(undefined)</code> → <code>"Hello, stranger!"</code></li>
+</ul>
+
+<h2>Notes</h2>
+<ul>
+  <li>Gutter numbers are generated via CSS <code>counter()</code> + <code>::before</code> — never in the DOM text, so they're always skipped on copy.</li>
+  <li>Red/green backgrounds are plain CSS classes (<code>.add</code> / <code>.del</code>) — no <code>```diff</code> fenced block needed.</li>
+  <li>Dark mode is picked up via <code>prefers-color-scheme</code>.</li>
+  <li>This is standalone HTML — works in any browser. For markdown targets (GitHub, VS Code preview), use the inline-numbers or <code>&lt;ol&gt;</code>-gutter variants shown in <code>PR-example.md</code>.</li>
+</ul>
+
+</body>
+</html>
