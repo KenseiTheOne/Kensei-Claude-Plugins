@@ -61,18 +61,22 @@ For each changed file, emit both unified and split markup back-to-back. The togg
   <div class="filename">path/to/file.ext</div>
   <div class="split">
     <div class="side" style="counter-reset: n N-1;">
-      <div class="sheader">Before</div>
-      <div class="srow ctx"><span class="num"></span><span class="code">unchanged line before</span></div>
-      <div class="srow del"><span class="num"></span><span class="code">removed line</span></div>
-      <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
-      <div class="srow ctx"><span class="num"></span><span class="code">unchanged line after</span></div>
+      <div class="side-body">
+        <div class="sheader">Before</div>
+        <div class="srow ctx"><span class="num"></span><span class="code">unchanged line before</span></div>
+        <div class="srow del"><span class="num"></span><span class="code">removed line</span></div>
+        <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+        <div class="srow ctx"><span class="num"></span><span class="code">unchanged line after</span></div>
+      </div>
     </div>
     <div class="side" style="counter-reset: n N-1;">
-      <div class="sheader">After</div>
-      <div class="srow ctx"><span class="num"></span><span class="code">unchanged line before</span></div>
-      <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
-      <div class="srow add"><span class="num"></span><span class="code">added line</span></div>
-      <div class="srow ctx"><span class="num"></span><span class="code">unchanged line after</span></div>
+      <div class="side-body">
+        <div class="sheader">After</div>
+        <div class="srow ctx"><span class="num"></span><span class="code">unchanged line before</span></div>
+        <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+        <div class="srow add"><span class="num"></span><span class="code">added line</span></div>
+        <div class="srow ctx"><span class="num"></span><span class="code">unchanged line after</span></div>
+      </div>
     </div>
   </div>
 </div>

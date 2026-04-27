@@ -114,6 +114,9 @@
     counter-reset: n;
     overflow-x: auto;
   }
+  .split .side .side-body {
+    min-width: max-content;
+  }
   .split .side .srow {
     display: grid;
     grid-template-columns: 50px 1fr;
@@ -147,6 +150,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    box-sizing: border-box;
   }
 
   .note {

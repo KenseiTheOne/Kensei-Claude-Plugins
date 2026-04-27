@@ -132,6 +132,9 @@
     counter-reset: n;
     overflow-x: auto;
   }
+  .split .side .side-body {
+    min-width: max-content;
+  }
   .split .side .srow {
     display: grid;
     grid-template-columns: 50px 1fr;
@@ -284,20 +287,24 @@
 <div class="filename">src/greet.js</div>
 <div class="split">
   <div class="side start-at-4-4">
-    <div class="sheader">Before</div>
-    <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
-    <div class="srow del"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${name}!`</span>;</span></div>
-    <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
-    <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
-    <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+    <div class="side-body">
+      <div class="sheader">Before</div>
+      <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
+      <div class="srow del"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${name}!`</span>;</span></div>
+      <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+      <div class="srow blank"><span class="num"></span><span class="code"> </span></div>
+      <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+    </div>
   </div>
   <div class="side start-at-4-4">
-    <div class="sheader">After</div>
-    <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
-    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">const</span> safe = (name ?? <span class="s">""</span>).trim();</span></div>
-    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">if</span> (!safe) <span class="k">return</span> <span class="s">"Hello, stranger!"</span>;</span></div>
-    <div class="srow add"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${safe}!`</span>;</span></div>
-    <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+    <div class="side-body">
+      <div class="sheader">After</div>
+      <div class="srow ctx"><span class="num"></span><span class="code"><span class="k">export function</span> greet(name) {</span></div>
+      <div class="srow add"><span class="num"></span><span class="code">  <span class="k">const</span> safe = (name ?? <span class="s">""</span>).trim();</span></div>
+      <div class="srow add"><span class="num"></span><span class="code">  <span class="k">if</span> (!safe) <span class="k">return</span> <span class="s">"Hello, stranger!"</span>;</span></div>
+      <div class="srow add"><span class="num"></span><span class="code">  <span class="k">return</span> <span class="s">`Hello, ${safe}!`</span>;</span></div>
+      <div class="srow ctx"><span class="num"></span><span class="code">}</span></div>
+    </div>
   </div>
 </div>
 </div>
