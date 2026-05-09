@@ -16,8 +16,8 @@
     {
       "name": "kensei-toolkit",
       "source": "./plugins/kensei-toolkit",
-      "description": "Skill collection — Unity review, PR preview, and more to come",
-      "version": "1.1.4",
+      "description": "Skill collection — Unity review, PR preview, session learn, and more to come",
+      "version": "1.2.0",
       "author": {
         "name": "Kensei"
       }
