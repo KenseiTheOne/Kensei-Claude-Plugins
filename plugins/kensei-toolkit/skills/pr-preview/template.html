@@ -46,15 +46,137 @@
   h1 { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
   h2 { margin-top: 32px; }
 
+  /* ---------- per-file <details> wrapper ---------- */
+  details.file { margin: 0 0 24px 0; }
+  details.file .diff,
+  details.file .split { margin-bottom: 0; }
+
+  summary.filename,
   .filename {
     font-family: var(--mono);
     font-size: 12px;
     background: var(--panel);
-    padding: 6px 12px;
+    padding: 8px 12px;
     border: 1px solid var(--border);
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     color: var(--muted);
+  }
+  summary.filename {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    list-style: none;
+  }
+  summary.filename::-webkit-details-marker { display: none; }
+  summary.filename::marker { content: ""; }
+  summary.filename::before {
+    content: "▾";
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.1s;
+    flex-shrink: 0;
+    margin-right: 4px;
+  }
+  details.file:not([open]) > summary.filename {
+    border-bottom: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  details.file:not([open]) > summary.filename::before {
+    transform: rotate(-90deg);
+  }
+  summary.filename .path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg);
+    font-weight: 500;
+  }
+
+  /* +X / −Y counts (reused in summary + file index) */
+  .counts {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .counts .add { color: var(--add-num); }
+  .counts .del { color: var(--del-num); margin-left: 6px; }
+
+  /* ---------- "Files changed" inline total ---------- */
+  .stats-total {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 10px;
+  }
+  .stats-total .add { color: var(--add-num); }
+  .stats-total .del { color: var(--del-num); margin-left: 6px; }
+
+  /* ---------- file index ---------- */
+  details.file-index {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin: 0 0 20px 0;
+    font-size: 13px;
+  }
+  details.file-index > summary {
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    color: var(--fg);
+    padding: 4px 0;
+    list-style: none;
+  }
+  details.file-index > summary::-webkit-details-marker { display: none; }
+  details.file-index > summary::marker { content: ""; }
+  details.file-index > summary::before {
+    content: "▾";
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.1s;
+  }
+  details.file-index:not([open]) > summary::before {
+    transform: rotate(-90deg);
+  }
+  .file-index-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .file-index-list a {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .file-index-list a:hover {
+    background: rgba(127, 127, 127, 0.12);
+    text-decoration: none;
+  }
+  .file-index-list .path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .diff {
@@ -132,7 +254,7 @@
     border-right: 1px solid var(--border);
   }
   .split .side .srow .num::before { counter-increment: n; content: counter(n); }
-  .split .side .srow.blank .num::before { content: ""; }
+  .split .side .srow.blank .num::before { content: ""; counter-increment: none; }
   .split .side .srow.blank { background: var(--panel); }
   .split .side .srow.blank .code { opacity: 0.4; }
   .split .side .srow.add { background: var(--add-bg); }
@@ -198,6 +320,83 @@
   }
   #view-unified:checked ~ .files .mode-split { display: none; }
   #view-split:checked ~ .files .mode-unified { display: none; }
+
+  /* ---------- soft-wrap toggle ---------- */
+  .wrap-toggle {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 0 20px 12px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .wrap-toggle::before {
+    content: "";
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    margin-right: 8px;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .wrap-toggle:hover::before { border-color: var(--fg); }
+  #wrap-lines:checked ~ .wrap-toggle::before {
+    background: var(--add-num);
+    border-color: var(--add-num);
+    box-shadow: inset 0 0 0 2px var(--bg);
+  }
+  #wrap-lines:checked ~ .wrap-toggle { color: var(--fg); }
+  #wrap-lines:checked ~ .files .row,
+  #wrap-lines:checked ~ .files .srow {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ---------- image diff ---------- */
+  .image-diff {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 0 0 6px 6px;
+    padding: 12px;
+  }
+  .image-diff figure { margin: 0; text-align: center; }
+  .image-diff figcaption {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .image-diff img {
+    max-width: 100%;
+    max-height: 480px;
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(45deg, #ccc 25%, transparent 25%) 0 0/16px 16px,
+      linear-gradient(-45deg, #ccc 25%, transparent 25%) 0 8px/16px 16px,
+      linear-gradient(45deg, transparent 75%, #ccc 75%) 8px -8px/16px 16px,
+      linear-gradient(-45deg, transparent 75%, #ccc 75%) -8px 0/16px 16px;
+  }
+
+  /* ---------- print ---------- */
+  @media print {
+    body { max-width: none; margin: 0; padding: 12px; color: #000; background: #fff; }
+    .view-toggle, .wrap-toggle, .view-radio { display: none !important; }
+    .mode-split { display: none !important; }
+    .mode-unified { display: block !important; }
+    details, details.file, details.file-index { /* forced open via JS beforeprint hook */ }
+    summary.filename::before, details.file-index > summary::before { display: none; }
+    a { color: inherit; text-decoration: none; }
+    .row, .srow { page-break-inside: avoid; }
+    details.file { page-break-inside: avoid; }
+  }
 </style>
 </head>
 <body>
@@ -212,15 +411,19 @@
   <!-- CHANGES -->
 </ul>
 
-<h2>Files changed</h2>
+<h2>Files changed <span class="stats-total"><!-- STATS_TOTAL --></span></h2>
+
+<!-- FILE_INDEX -->
 
 <input type="radio" name="view" id="view-unified" class="view-radio" checked>
 <input type="radio" name="view" id="view-split" class="view-radio">
+<input type="checkbox" id="wrap-lines" class="view-radio">
 
 <div class="view-toggle">
   <label for="view-unified">Unified</label>
   <label for="view-split">Split</label>
 </div>
+<label for="wrap-lines" class="wrap-toggle">Soft-wrap long lines</label>
 
 <div class="files">
   <!-- FILES -->
@@ -232,6 +435,25 @@
 </ul>
 
 <!-- NOTES_SECTION -->
+
+<script>
+  // Expand every <details> for printing so collapsed files aren't lost in the PDF.
+  // Restore prior state after print dialog closes.
+  (function () {
+    var saved = null;
+    window.addEventListener('beforeprint', function () {
+      var els = document.querySelectorAll('details');
+      saved = Array.prototype.map.call(els, function (d) { return d.open; });
+      els.forEach(function (d) { d.open = true; });
+    });
+    window.addEventListener('afterprint', function () {
+      if (!saved) return;
+      var els = document.querySelectorAll('details');
+      els.forEach(function (d, i) { d.open = saved[i]; });
+      saved = null;
+    });
+  })();
+</script>
 
 </body>
 </html>
