@@ -7,8 +7,8 @@
     {
       "name": "kensei-statusline",
       "source": "./plugins/kensei-statusline",
-      "description": "Two-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats",
-      "version": "1.3.0",
+      "description": "Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats",
+      "version": "1.3.1",
       "author": {
         "name": "Kensei"
       }

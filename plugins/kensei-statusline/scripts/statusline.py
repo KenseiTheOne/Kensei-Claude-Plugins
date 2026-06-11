@@ -69,7 +69,7 @@ def parse_reset(value) -> datetime | None:
 
 
 def fmt_rate_limits(data: dict) -> str | None:
-    """Format subscription usage windows: '5h 24% ↻18:00 · 7d 41% ↻16.06'.
+    """Format subscription usage windows: '5h 24% ↻ 18:00 · 7d 41% ↻ 16.06'.
     rate_limits is only sent for Pro/Max subscribers, after the first API response."""
     rl = data.get("rate_limits") or {}
     dim = "\033[2m"
@@ -84,7 +84,7 @@ def fmt_rate_limits(data: dict) -> str | None:
         seg = f"{dim}{label}{rst} {pct_color(pct)}{pct}%{rst}"
         reset = parse_reset(win.get("resets_at"))
         if reset:
-            seg += f" {dim}↻{reset.strftime(reset_fmt)}{rst}"
+            seg += f" {dim}↻ {reset.strftime(reset_fmt)}{rst}"
         parts.append(seg)
     if not parts:
         return None
@@ -419,19 +419,20 @@ def main():
         if type_parts:
             agents_part += f" \033[2m({', '.join(type_parts)}){rst}"
 
-    usage = fmt_rate_limits(data)
-    usage_part = f" {dim}\u2502{rst} {usage}" if usage else ""
-
-    # Line 1: model, context, tokens, cost, usage limits, agents
+    # Line 1: model, context, tokens, cost, agents
     print(
         f"{model} {dim}\u2502{rst} {bar} {pct}% "
         f"{dim}\u2502{rst} \033[36m\u2191{rst}{fmt_tokens(current_input)} \033[35m\u2193{rst}{fmt_tokens(total_out)} "
         f"{dim}\u2502{rst} {cost_str}"
-        f"{usage_part}"
         f"{agents_part}"
     )
 
-    # Line 2: git info + lines changed + project stats
+    # Line 2: subscription usage limits
+    usage = fmt_rate_limits(data)
+    if usage:
+        print(usage)
+
+    # Line 3: git info + lines changed + project stats
     cwd = data.get("cwd") or data.get("workspace", {}).get("current_dir", "")
     if cwd:
         git_line = get_git_info(cwd)
