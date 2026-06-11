@@ -1,11 +1,11 @@
 # Kensei Statusline
 
-Two-line Claude Code statusline with model info, tokens, cost, subagents, and git status.
+Two-line Claude Code statusline with model info, tokens, cost, usage limits, subagents, and git status.
 
 ## Display
 
 ```
-Opus │ ▓▓▓▓░░░░░░ 42% │ ↑380.0K ↓62.0K │ ~$10.3 │ 3 agents (Sonnetx2, Opus)
+Opus │ ▓▓▓▓░░░░░░ 42% │ ↑380.0K ↓62.0K │ ~$10.3 │ 5h 24% ↻18:00 · 7d 41% ↻16.06 │ 3 agents (Sonnetx2, Opus)
 main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 ```
 
@@ -14,6 +14,7 @@ main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 - **Context bar** — green (<50%), yellow (50-80%), red (>80%)
 - **↑ / ↓** — current context input tokens / cumulative output tokens
 - **~$X.XX** — estimated Anthropic API cost
+- **5h / 7d** — subscription usage windows with reset time (`↻HH:MM` for 5-hour, `↻DD.MM` for weekly), same color thresholds as the context bar. Shown only on Claude Pro/Max — Claude Code sends `rate_limits` after the first API response of the session
 - **N agents** — active subagents grouped by model
 
 **Line 2:**

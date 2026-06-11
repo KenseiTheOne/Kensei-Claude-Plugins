@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kensei Statusline — model, context, tokens, estimated API cost, git info."""
+"""Kensei Statusline — model, context, tokens, estimated API cost, usage limits, git info."""
 from __future__ import annotations
 
 import sys
@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import glob as glob_mod
+from datetime import datetime
 
 # Force UTF-8 output on Windows
 if sys.platform == "win32":
@@ -43,12 +44,51 @@ def make_bar(pct: int, width: int = 10) -> str:
     return "\u2593" * filled + "\u2591" * (width - filled)
 
 
-def colorize_bar(bar: str, pct: int) -> str:
+def pct_color(pct: int) -> str:
     if pct >= 80:
-        return f"\033[31m{bar}\033[0m"   # red
+        return "\033[31m"   # red
     if pct >= 50:
-        return f"\033[33m{bar}\033[0m"   # yellow
-    return f"\033[32m{bar}\033[0m"        # green
+        return "\033[33m"   # yellow
+    return "\033[32m"        # green
+
+
+def colorize_bar(bar: str, pct: int) -> str:
+    return f"{pct_color(pct)}{bar}\033[0m"
+
+
+def parse_reset(value) -> datetime | None:
+    """resets_at comes as epoch seconds; tolerate ISO strings too."""
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+        except ValueError:
+            return None
+    return None
+
+
+def fmt_rate_limits(data: dict) -> str | None:
+    """Format subscription usage windows: '5h 24% ↻18:00 · 7d 41% ↻16.06'.
+    rate_limits is only sent for Pro/Max subscribers, after the first API response."""
+    rl = data.get("rate_limits") or {}
+    dim = "\033[2m"
+    rst = "\033[0m"
+    parts = []
+    for key, label, reset_fmt in (("five_hour", "5h", "%H:%M"), ("seven_day", "7d", "%d.%m")):
+        win = rl.get(key) or {}
+        pct = win.get("used_percentage")
+        if pct is None:
+            continue
+        pct = int(pct)
+        seg = f"{dim}{label}{rst} {pct_color(pct)}{pct}%{rst}"
+        reset = parse_reset(win.get("resets_at"))
+        if reset:
+            seg += f" {dim}↻{reset.strftime(reset_fmt)}{rst}"
+        parts.append(seg)
+    if not parts:
+        return None
+    return f" {dim}·{rst} ".join(parts)
 
 
 def parse_transcript(filepath: str) -> dict[str, dict]:
@@ -379,11 +419,15 @@ def main():
         if type_parts:
             agents_part += f" \033[2m({', '.join(type_parts)}){rst}"
 
-    # Line 1: model, context, tokens, cost, agents
+    usage = fmt_rate_limits(data)
+    usage_part = f" {dim}\u2502{rst} {usage}" if usage else ""
+
+    # Line 1: model, context, tokens, cost, usage limits, agents
     print(
         f"{model} {dim}\u2502{rst} {bar} {pct}% "
         f"{dim}\u2502{rst} \033[36m\u2191{rst}{fmt_tokens(current_input)} \033[35m\u2193{rst}{fmt_tokens(total_out)} "
         f"{dim}\u2502{rst} {cost_str}"
+        f"{usage_part}"
         f"{agents_part}"
     )
 
