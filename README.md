@@ -18,8 +18,8 @@ Then install any plugin:
 
 | Plugin | Description |
 |--------|-------------|
-| [kensei-statusline](plugins/kensei-statusline/) | Two-line statusline: model, context, tokens, API cost, subagents, git info |
-| [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — Unity review, session learn, todo capture, and more to come |
+| [kensei-statusline](plugins/kensei-statusline/) | Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats |
+| [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — Unity review, session learn, todo capture, brainstorm, and more to come |
 
 ### kensei-statusline
 
@@ -36,6 +36,7 @@ A `SessionStart` hook auto-runs setup once when the plugin is first installed.
 | [unity-review](plugins/kensei-toolkit/skills/unity-review/) | `/kensei-toolkit:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
 | [learn](plugins/kensei-toolkit/skills/learn/) | `/kensei-toolkit:learn` | Mine the current session and propose additions to project `CLAUDE.md` |
 | [todo](plugins/kensei-toolkit/skills/todo/) | `/kensei-toolkit:todo` | Capture session loose ends into `TODO.md` (bugs, follow-ups, open questions) |
+| [brainstorm](plugins/kensei-toolkit/skills/brainstorm/) | `/kensei-toolkit:brainstorm` | Collaborative design dialogue before implementation — questions, challenge, approach exploration |
 
 ## Structure
 
