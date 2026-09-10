@@ -19,7 +19,7 @@ Then install any plugin:
 | Plugin | Description |
 |--------|-------------|
 | [kensei-statusline](plugins/kensei-statusline/) | Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats |
-| [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — Unity review, session learn, todo capture, brainstorm, and more to come |
+| [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — tracker task runner, Unity review, session learn, todo capture, brainstorm |
 
 ### kensei-statusline
 
@@ -33,6 +33,7 @@ A `SessionStart` hook auto-runs setup once when the plugin is first installed.
 
 | Skill | Command | Description |
 |-------|---------|-------------|
+| [ticket](plugins/kensei-toolkit/skills/ticket/) | `/kensei-toolkit:ticket <url\|id>` | Run one tracker task end-to-end — context, criteria, implement, test, review, push, report. Any tracker via MCP, CLI or browser |
 | [unity-review](plugins/kensei-toolkit/skills/unity-review/) | `/kensei-toolkit:unity-review` | Senior+ Unity code review (6 agents, 4 modes) |
 | [learn](plugins/kensei-toolkit/skills/learn/) | `/kensei-toolkit:learn` | Mine the current session and propose additions to project `CLAUDE.md` |
 | [todo](plugins/kensei-toolkit/skills/todo/) | `/kensei-toolkit:todo` | Capture session loose ends into `TODO.md` (bugs, follow-ups, open questions) |
@@ -43,5 +44,5 @@ A `SessionStart` hook auto-runs setup once when the plugin is first installed.
 ```
 .claude-plugin/                          — Marketplace manifest
 plugins/kensei-statusline/               — Statusline plugin (hook + setup skill)
-plugins/kensei-toolkit/skills/           — Skill collection (unity-review, ...)
+plugins/kensei-toolkit/skills/           — Skill collection (ticket, unity-review, ...)
 ```
