@@ -1,12 +1,12 @@
 # ticket — tracker access, channels 3–5
 
 Read this only when the ticket could not be reached over MCP (channel 1) or a CLI (channel 2).
-Everything here is about getting **title, description, comments** in — and, at the end, a report
-back out.
+Everything here is about getting **title, description, comments** in — and, when the user orders
+it, a comment back out.
 
 The rest of the pipeline does not care which channel was used. It only cares that `RUN.md`
-records `tracker_channel`, and that Step 12 reports over the same channel or says why it could
-not.
+records `tracker_channel`, and that a comment the user orders goes out over the same channel, or
+the report says why it could not.
 
 ---
 
@@ -49,7 +49,9 @@ mcp__claude-in-chrome__get_page_text,mcp__claude-in-chrome__read_page,
 mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__find
 ```
 
-Add `computer` and `form_input` only if the user has approved writing back (see below).
+For reading you may add `computer`, but only to click the expand / show-more / pagination
+controls found with `find`. `form_input`, typing and every other click wait until the user has
+ordered a comment and approved its text (see below).
 
 ### Reading
 
@@ -83,15 +85,15 @@ outward-facing action performed by clicking through a page you cannot fully veri
 
 Rules:
 
-1. **Ask first**, showing the exact comment text. This is an explicit exception to "no more
-   questions after Step 5" — that promise covers the engineering work, not publishing to a
-   channel the skill cannot verify.
+1. **Only an ordered, approved comment.** Post nothing the user has not ordered and then approved
+   word for word under "Task comments" in `SKILL.md` — drafted, fact-checked by a fresh agent,
+   shown in full. Type exactly that text; do not "tidy" it in the editor.
 2. Only ever post a **comment**. Never change status, assignee, or any other field through the
-   browser. Status changes go through MCP or not at all.
+   browser. Status changes go through MCP or CLI, or not at all.
 3. After posting, re-read the page and confirm the comment actually appeared. If you cannot
-   confirm it, say "posted, not confirmed" — never "reported".
-4. If the user declines or it fails: fall back to channel 5. The report is written to
-   `<run_dir>/REPORT.md` and printed for them to paste. Nothing is lost.
+   confirm it, say "sent, not confirmed" — never "posted" or "reported".
+4. If it fails: fall back to channel 5 — print the approved text for the user to paste. The
+   report stays in `<run_dir>/REPORT.md` either way. Nothing is lost.
 
 ---
 
@@ -103,13 +105,14 @@ Ask the user to paste the ticket text and its comments. Say plainly what you nee
 
 Record `tracker_channel: manual`. Consequences, all of which go into the final report:
 
-- `status_vocabulary: unavailable` — status untouched.
-- The final report is written to `<run_dir>/REPORT.md` and printed in full for the user to paste
-  into the tracker themselves.
+- `status_vocabulary: unavailable` — the status cannot be changed by this run, even on command.
+- The report is always written to `<run_dir>/REPORT.md`. A comment the user orders is still
+  drafted and fact-checked under "Task comments" in `SKILL.md`; the approved text is printed in
+  full for the user to paste into the tracker themselves.
 - Criteria marked `[from ticket]` mean "from the pasted text". Everything else is `[added]`, and
   the Step 5 confirmation carries more weight than usual — it is the only place the user can
   catch a criterion that came from you rather than from the ticket.
 
 This channel is not a degraded mode of the skill. Every check that matters — frozen criteria,
-commit-then-diff, the fresh reviewer, three-state criteria, the round cap — works identically.
-Only the input and output plumbing is manual.
+snapshot-then-diff, the fresh reviewer, three-state criteria, the round cap, publishing only on
+command — works identically. Only the input and output plumbing is manual.
