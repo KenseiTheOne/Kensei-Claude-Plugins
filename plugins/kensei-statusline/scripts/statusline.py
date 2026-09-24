@@ -7,6 +7,9 @@ import os
 import json
 import re
 import subprocess
+import time
+import hashlib
+import unicodedata
 import glob as glob_mod
 from datetime import datetime
 
@@ -58,34 +61,277 @@ def colorize_bar(bar: str, pct: int) -> str:
 
 def parse_reset(value) -> datetime | None:
     """resets_at comes as epoch seconds; tolerate ISO strings too."""
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value)
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
-        except ValueError:
-            return None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value)
+        if isinstance(value, str):
+            # Python 3.9's fromisoformat takes only 3 or 6 fractional digits
+            value = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6],
+                           value.replace("Z", "+00:00"))
+            return datetime.fromisoformat(value).astimezone()
+    except (ValueError, OverflowError, OSError):
+        return None
     return None
 
 
+# --- Server usage rows ----------------------------------------------------------------------
+# Claude Code hands the statusline only the five_hour / seven_day windows. Every other meter —
+# a separate weekly Fable limit, or whatever the server adds next — exists only in the rows
+# (`limits[]`) of the claude.ai usage endpoint that /usage renders. They are read from a small
+# cache that a detached background process refreshes, so rendering never waits on the network.
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+USAGE_CACHE = os.path.join(CONFIG_DIR, "cache", "kensei-statusline", "usage.json")
+USAGE_TTL = 180            # seconds between refreshes
+USAGE_MAX_AGE = 3600       # rows older than this are not shown
+REFRESH_DEADLINE = 30      # a refresh child exits after this, whatever it is waiting on
+REFRESH_LOCK_TTL = 60      # a lock older than this belongs to a dead refresh
+ERROR_BACKOFF = 300
+BACKOFF = {401: 600, 403: 3600, 429: 900}
+SEVERITY_COLOR = {"warning": "\033[33m", "critical": "\033[31m"}
+THIRD_PARTY = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")
+
+
+def keychain_service() -> str:
+    """The keychain item Claude Code keeps its login in: suffixed per config dir when
+    CLAUDE_CONFIG_DIR (or CLAUDE_SECURESTORAGE_CONFIG_DIR) is set, as Claude Code does."""
+    secure = os.environ.get("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+    if secure is not None:
+        default, base = not secure, secure
+    else:
+        default, base = not os.environ.get("CLAUDE_CONFIG_DIR"), os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if default:
+        return "Claude Code-credentials"
+    digest = hashlib.sha256(unicodedata.normalize("NFC", base).encode()).hexdigest()[:8]
+    return f"Claude Code-credentials-{digest}"
+
+
+def read_oauth_token() -> str | None:
+    """The OAuth access token, read where Claude Code keeps it. Never refreshed here: a refresh
+    rotates the refresh token and would log Claude Code itself out. An expired token is skipped —
+    Claude Code renews it on its next request."""
+    raw = None
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["/usr/bin/security", "find-generic-password", "-s",
+                                  keychain_service(), "-w"],
+                                 capture_output=True, text=True, timeout=3)
+            raw = out.stdout.strip() if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            raw = None
+    if not raw:
+        try:
+            with open(os.path.join(CONFIG_DIR, ".credentials.json"), encoding="utf-8") as f:
+                raw = f.read()
+        except OSError:
+            return None
+    try:
+        oauth = json.loads(raw).get("claudeAiOauth")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(oauth, dict):
+        return None
+    token, expires = oauth.get("accessToken"), oauth.get("expiresAt")
+    if not isinstance(token, str) or not token:
+        return None
+    if isinstance(expires, (int, float)) and expires / 1000 < time.time() + 60:
+        return None
+    return token
+
+
+def load_usage_cache() -> dict:
+    try:
+        with open(USAGE_CACHE, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cache, dict):
+        return {}
+    limit = time.time() + max(BACKOFF.values())
+    for key in ("fetched_at", "next_try"):  # a hand edit or a clock jump must not wedge it
+        if not isinstance(cache.get(key), (int, float)) or cache[key] > limit:
+            cache.pop(key, None)
+    if not isinstance(cache.get("rows"), list):
+        cache.pop("rows", None)
+    return cache
+
+
+def save_usage_cache(cache: dict) -> None:
+    os.makedirs(os.path.dirname(USAGE_CACHE), exist_ok=True)
+    tmp = f"{USAGE_CACHE}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+        os.replace(tmp, USAGE_CACHE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def refresh_usage() -> None:
+    """Runs detached (--refresh-usage): fetch the usage rows once and rewrite the cache. The next
+    attempt is pushed back before the request goes out, so a crash, a hang or a kill cannot turn
+    into a request per render; the last good rows survive an error."""
+    import threading
+    import urllib.error
+    import urllib.request
+
+    timer = threading.Timer(REFRESH_DEADLINE, os._exit, (1,))
+    timer.daemon = True
+    timer.start()
+    lock = USAGE_CACHE + ".lock"
+    try:
+        cache, now = load_usage_cache(), time.time()
+        if now < (cache.get("next_try") or 0):
+            return  # another refresh got here first
+        cache.update(next_try=now + ERROR_BACKOFF, error="interrupted")
+        save_usage_cache(cache)
+        token = read_oauth_token()
+        if not token:
+            # logged out, or another account: its rows must not stay next to this one's
+            cache.update(next_try=now + BACKOFF[401], error="no valid token", rows=[])
+            return
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None  # the token goes to api.anthropic.com and nowhere else
+
+        req = urllib.request.Request(USAGE_URL, headers={
+            "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json", "User-Agent": "kensei-statusline"})
+        try:
+            with urllib.request.build_opener(NoRedirect).open(req, timeout=8) as resp:
+                body = json.load(resp)
+        except urllib.error.HTTPError as e:
+            cache.update(next_try=now + BACKOFF.get(e.code, ERROR_BACKOFF), error=f"HTTP {e.code}")
+            return
+        except Exception as e:  # noqa: BLE001 — only the type name is kept, never the text
+            cache.update(next_try=now + ERROR_BACKOFF, error=type(e).__name__)
+            return
+        rows = body.get("limits") if isinstance(body, dict) else None
+        cache = {"fetched_at": now, "next_try": now + USAGE_TTL,
+                 "rows": [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []}
+    except Exception as e:  # noqa: BLE001
+        cache = locals().get("cache") or {}
+        cache.update(next_try=time.time() + ERROR_BACKOFF, error=type(e).__name__)
+    finally:
+        try:
+            save_usage_cache(cache)
+        except (OSError, NameError):
+            pass
+        finally:
+            try:
+                os.unlink(lock)
+            except OSError:
+                pass
+
+
+def maybe_refresh_usage(cache: dict) -> None:
+    """Start a detached refresh when the cache is due and none is running."""
+    now = time.time()
+    if os.environ.get("KENSEI_STATUSLINE_NO_USAGE_FETCH") or now < (cache.get("next_try") or 0):
+        return
+    lock = USAGE_CACHE + ".lock"
+    try:
+        os.makedirs(os.path.dirname(USAGE_CACHE), exist_ok=True)
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if now - os.path.getmtime(lock) < REFRESH_LOCK_TTL:
+                return
+            os.unlink(lock)
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        detach = ({"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32"
+                  else {"start_new_session": True})
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--refresh-usage"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, **detach)
+    except OSError:
+        pass
+
+
+def fmt_usage_row(row: dict) -> str | None:
+    """One server row: its label, percent and reset, coloured up by the server's severity."""
+    pct = row.get("percent")
+    if not isinstance(pct, (int, float)) or pct != pct:  # NaN
+        return None
+    reset = parse_reset(row.get("resets_at"))
+    if reset and reset.timestamp() < time.time():
+        return None  # the window has reset since the row was fetched
+    scope = row.get("scope") if isinstance(row.get("scope"), dict) else {}
+    model = scope.get("model") if isinstance(scope.get("model"), dict) else {}
+    surface = scope.get("surface") if isinstance(scope.get("surface"), dict) else {}
+    name = model.get("display_name") or surface.get("display_name")
+    kind = row.get("kind")
+    label = str(name or {"session": "5h", "weekly_all": "7d"}.get(kind) or kind or "?")
+    pct = int(pct)
+    dim, rst = "\033[2m", "\033[0m"
+    color = SEVERITY_COLOR.get(row.get("severity")) or pct_color(pct)
+    seg = f"{dim}{label}{rst} {color}{pct}%{rst}"
+    if reset:
+        seg += f" {dim}↻ {reset.strftime('%H:%M' if row.get('group') == 'session' else '%d.%m')}{rst}"
+    return seg
+
+
+def server_rows(data: dict, has_session: bool, has_weekly: bool) -> list[tuple[str, str]]:
+    """(kind, segment) for the rows the statusline input does not carry (a Fable weekly limit, …),
+    plus the session and weekly rows themselves while Claude Code has not sent them yet."""
+    if not data.get("rate_limits"):
+        cost = data.get("cost") or {}
+        answered = (cost.get("total_api_duration_ms") or 0) > 0
+        if answered or any(os.environ.get(k) for k in THIRD_PARTY):
+            return []  # a session with no plan limits (API key, Bedrock, …): nothing to show
+    cache = load_usage_cache()
+    if data.get("rate_limits"):  # subscribers only — no request from other sessions
+        maybe_refresh_usage(cache)
+    fetched = cache.get("fetched_at") or 0
+    if not 0 <= time.time() - fetched <= USAGE_MAX_AGE:
+        return []
+    covered = ({"session"} if has_session else set()) | ({"weekly_all"} if has_weekly else set())
+    out = []
+    for row in cache.get("rows") or []:
+        try:  # one odd row must not hide the rest
+            if isinstance(row, dict) and row.get("kind") not in covered:
+                seg = fmt_usage_row(row)
+                if seg:
+                    out.append((str(row.get("kind")), seg))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
 def fmt_rate_limits(data: dict) -> str | None:
-    """Format subscription usage windows: '5h 24% ↻ 18:00 · 7d 41% ↻ 16.06'.
-    rate_limits is only sent for Pro/Max subscribers, after the first API response."""
+    """Format subscription usage windows: '5h 24% ↻ 18:00 · 7d 41% ↻ 16.06 · Fable 11% ↻ 28.09'.
+    rate_limits is only sent for Pro/Max subscribers, after the first API response; the rows
+    after it come from the usage endpoint (see server_rows)."""
     rl = data.get("rate_limits") or {}
     dim = "\033[2m"
     rst = "\033[0m"
     parts = []
+    shown = set()
     for key, label, reset_fmt in (("five_hour", "5h", "%H:%M"), ("seven_day", "7d", "%d.%m")):
         win = rl.get(key) or {}
         pct = win.get("used_percentage")
         if pct is None:
             continue
+        shown.add(key)
         pct = int(pct)
         seg = f"{dim}{label}{rst} {pct_color(pct)}{pct}%{rst}"
         reset = parse_reset(win.get("resets_at"))
         if reset:
             seg += f" {dim}↻ {reset.strftime(reset_fmt)}{rst}"
         parts.append(seg)
+    try:
+        extra = server_rows(data, "five_hour" in shown, "seven_day" in shown)
+        # keep the server's order: a session row from the cache goes before the stdin 7d
+        parts = [g for k, g in extra if k == "session"] + parts + [g for k, g in extra if k != "session"]
+    except Exception:
+        pass  # the extra rows are a bonus; never lose the line over them
     if not parts:
         return None
     return f" {dim}·{rst} ".join(parts)
@@ -447,6 +693,9 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--refresh-usage"]:
+        refresh_usage()
+        sys.exit(0)
     try:
         main()
     except Exception:

@@ -28,8 +28,13 @@ CACHE = os.path.join(
     "kensei-claude-plugins", "kensei-statusline",
 )
 
+def version_key(name: str) -> tuple:
+    # 1.10.0 must beat 1.4.0 — a plain string sort would not
+    return tuple(int(p) if p.isdigit() else -1 for p in name.split("."))
+
+
 if os.path.isdir(CACHE):
-    versions = sorted(os.listdir(CACHE))
+    versions = sorted(os.listdir(CACHE), key=version_key)
     if versions:
         script = os.path.join(CACHE, versions[-1], "scripts", "statusline.py")
         if os.path.isfile(script):
@@ -55,6 +60,9 @@ Add or replace the `statusLine` key:
 Use the Edit tool to modify the file. If `statusLine` already exists, replace it.
 
 Also remove the dismiss marker `~/.claude/.statusline-no-setup` if it exists (user is explicitly re-running setup).
+
+If `~/.claude/scripts/kensei-statusline.py` already exists from an earlier install, overwrite it:
+older wrappers picked the plugin version by string order and would run 1.4.0 instead of 1.10.0.
 
 ## Step 3 — Confirm
 

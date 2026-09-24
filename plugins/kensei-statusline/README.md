@@ -6,7 +6,7 @@ Multi-line Claude Code statusline with model info, tokens, cost, usage limits, s
 
 ```
 Opus │ ▓▓▓▓░░░░░░ 42% │ ↑380.0K ↓62.0K │ ~$10.3 │ 3 agents (Sonnetx2, Opus)
-5h 24% ↻ 18:00 · 7d 41% ↻ 16.06
+5h 24% ↻ 18:00 · 7d 41% ↻ 16.06 · Fable 11% ↻ 28.09
 main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 ```
 
@@ -19,6 +19,7 @@ main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 
 **Line 2 (usage limits):**
 - **5h / 7d** — subscription usage windows with reset time (`↻ HH:MM` for 5-hour, `↻ DD.MM` for weekly), same color thresholds as the context bar. Shown only on Claude Pro/Max — Claude Code sends `rate_limits` after the first API response of the session
+- **Per-model and other meters** (e.g. a separate weekly **Fable** limit) — every other row of the claude.ai usage endpoint that `/usage` shows, labelled and ordered as the server sends them and coloured up by its severity. Claude Code does not pass these to statuslines, so the script fetches them itself: a detached background process calls `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's own OAuth access token (macOS keychain item `Claude Code-credentials`, per profile under `CLAUDE_CONFIG_DIR`, or `.credentials.json` in the config dir) at most every 3 minutes, with backoff after errors, and caches only the rows in `<config dir>/cache/kensei-statusline/usage.json`. Rendering never waits on the network. The token is never refreshed, logged or stored; an expired one is skipped until Claude Code renews it. API-key sessions make no request. Set `KENSEI_STATUSLINE_NO_USAGE_FETCH=1` to turn the fetch off
 
 **Line 3:**
 - **Branch** — current git branch (bold blue)

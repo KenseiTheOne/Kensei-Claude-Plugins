@@ -1,4 +1,5 @@
 {
+  "description": "Offer statusline setup once, when the plugin is enabled but statusLine is not configured yet.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +8,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/setup-check.py\"",
-            "timeout": 3
+            "timeout": 5
           }
         ]
       }

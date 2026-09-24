@@ -18,7 +18,7 @@ Then install any plugin:
 
 | Plugin | Description |
 |--------|-------------|
-| [kensei-statusline](plugins/kensei-statusline/) | Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats |
+| [kensei-statusline](plugins/kensei-statusline/) | Multi-line statusline: model, context, tokens, API cost, usage limits (incl. per-model ones like Fable), subagents, git info, project stats |
 | [kensei-toolkit](plugins/kensei-toolkit/) | Skill collection — tracker task runner, Unity review, session learn, todo capture, brainstorm |
 
 ### kensei-statusline
