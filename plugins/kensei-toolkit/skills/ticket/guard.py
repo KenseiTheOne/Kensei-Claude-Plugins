@@ -301,6 +301,28 @@ def human_text(entry):
     return text
 
 
+UNATTENDED = re.compile(r"(?<![\w-])--unattended(?![\w-])")
+UNATTENDED_RUN = "an --unattended /ticket run"
+TICKET_COMMAND = re.compile(r"<command-name>/?(?:[\w.-]+:)?ticket</command-name>")
+
+
+def ticket_args(entry):
+    """The arguments of a /ticket invocation carried by this entry, or None."""
+    content = entry.get("message", {}).get("content")
+    if entry.get("type") == "user":
+        text = blocks_text(content)
+        if TICKET_COMMAND.search(text):
+            args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
+            return args.group(1) if args else ""
+    elif entry.get("type") == "assistant" and isinstance(content, list):
+        for b in content:
+            inp = b.get("input") or {} if isinstance(b, dict) else {}
+            if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Skill"
+                    and re.search(r"(?:^|:)ticket$", str(inp.get("skill", "")))):
+                return str(inp.get("args", ""))
+    return None
+
+
 def is_human(entry):
     if entry.get("isSidechain") or entry.get("isMeta"):
         return False
@@ -372,6 +394,10 @@ def read_authorization(transcript_path, cwd):
     if not transcript_path or not os.path.isfile(transcript_path):
         return None, set(), set(), set(), set(), "no transcript to read the user's command from"
     human, after, saw_origin, truncated = scan_back(transcript_path)
+    # Nobody is there to give a command: whatever the transcript looks like, grant nothing.
+    if any(UNATTENDED.search(args) for args in map(ticket_args, ([human] if human else []) + after)
+           if args is not None):
+        return None, set(), set(), set(), set(), UNATTENDED_RUN
     if human is None:
         if truncated:
             failure = "the user's latest message is beyond the guard's scan window"
@@ -931,6 +957,11 @@ STEMS = {"commit": r"комм?ит|commit", "push": r"пуш|push|залей", "
 
 
 def decide(gated, text, actions, approved, used, unseen, failure):
+    if failure == UNATTENDED_RUN:
+        what = ", ".join(item[1] for item in gated)
+        return (f"[ticket guard] Blocked: {what}. In {UNATTENDED_RUN} nothing leaves the working "
+                "tree from this session — the caller publishes. Do not retry or work around this; "
+                "finish the run and write RESULT.json (SKILL.md, Unattended).")
     problems = []
     for item in gated:
         action, what = item[0], item[1]

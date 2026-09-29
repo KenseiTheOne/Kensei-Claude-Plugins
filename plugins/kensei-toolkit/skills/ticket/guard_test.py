@@ -409,6 +409,30 @@ class HookTest(unittest.TestCase):
         slug = [invocation("https://linear.app/acme/issue/ENG-1/fix-push-notifications fix")]
         self.assertIsNotNone(run_hook(*bash("git push"), slug))
 
+    def test_unattended_grants_nothing(self):
+        typed = [invocation("https://app.clickup.com/t/1/abc --unattended закоммить и запушь"),
+                 assistant()]
+        headless = [{"type": "user", "origin": None, "message": {"role": "user", "content":
+                     "<command-message>kensei-toolkit:ticket</command-message>\n"
+                     "<command-name>/kensei-toolkit:ticket</command-name>\n"
+                     "<command-args>https://app.clickup.com/t/1/abc --unattended</command-args>"}},
+                    assistant()]
+        by_model = flat(human("закоммить и запушь"), assistant(),
+                        call("Skill", {"skill": "kensei-toolkit:ticket",
+                                       "args": "abc --unattended"}))
+        for entries in (typed, headless, by_model):
+            for cmd in ("git commit -m x", "git push -u origin task/abc-x",
+                        "gh pr create --title x --body y", "git -C . push origin HEAD:x"):
+                self.assertIn("--unattended", run_hook(*bash(cmd), entries) or "", cmd)
+        snapshot = ("GIT_INDEX_FILE=/r/.git/ticket-abc.index git read-tree HEAD && "
+                    "GIT_INDEX_FILE=/r/.git/ticket-abc.index git add -- a.txt && "
+                    "GIT_INDEX_FILE=/r/.git/ticket-abc.index git write-tree")
+        self.assertIsNone(run_hook(*bash(snapshot), headless))
+        # a message typed after the run is an ordinary command again
+        self.assertIsNone(run_hook(*bash("git commit -m x"), typed + [human("закоммить")]))
+        self.assertIsNone(run_hook(*bash("git commit -m x"),
+                                   [invocation("abc --unattendedly закоммить"), assistant()]))
+
     def test_model_invoked_skill_voids_earlier_typing(self):
         self.assertIsNotNone(run_hook(*bash("git commit -m x"),
                                       flat(human("закоммить"), assistant(),

@@ -12,6 +12,9 @@ comment the user ordered for right away (`SKILL.md`, "Commands" — timing follo
 comment always through "Task comments". Step 12 stops at the publish gate and acts only on the
 user's commands.
 
+In an unattended run (`SKILL.md`, "Unattended") every stop and question below takes the default
+from that section's table, and every agent prompt below also carries the caller's instructions.
+
 ---
 
 ## probe mode — short path
@@ -27,7 +30,8 @@ user's commands.
 2. Run the test channel (Step 9) if one exists and a relevant test can decide it.
 3. Run the baseline check (Step 8.2, with an empty whitelist) — the agents must have left git
    as they found it.
-4. Write `REPORT.md` with outcome `probe` and stop at the publish gate (Step 12). There is
+4. Write `REPORT.md` with outcome `probe` and stop at the publish gate (Step 12; unattended:
+   its "Unattended end"). There is
    nothing to commit or push, and the skill suggests no status change (the user may still order
    one — 12.6). The answer reaches the tracker only if the user orders a comment — then through
    "Task comments" in `SKILL.md`. If the answer is "yes, it still reproduces", the report ends
@@ -108,16 +112,17 @@ Reply: at most 40 lines — every file you touched (created, modified or deleted
 
 Pass project guardrails into the prompt if `.claude/task-flow-rules.md` names any (banned APIs,
 forbidden directories, style guards enforced by hooks). An implementer that trips a hook without
-knowing it exists burns a round rediscovering it.
+knowing it exists burns a round rediscovering it. In an unattended run, pass the caller's
+instructions too, verbatim.
 
 ---
 
 ## Step 8 — Snapshot, then produce the diff
 
 Order matters. The reviewer must judge exactly the tree a later commit will contain — and
-nothing is committed here. The snapshot is a git tree built in a private index file inside
-`<run_dir>`: it includes new files and deletions, applies `.gitattributes` filters like any
-`git add`, and leaves `HEAD`, the branch and the user's own index untouched.
+nothing is committed here. The snapshot is a git tree built in a private index file in the
+repository's git directory: it includes new files and deletions, applies `.gitattributes`
+filters like any `git add`, and leaves `HEAD`, the branch and the user's own index untouched.
 
 1. **Collect the whitelist — files only.** The union of every file reported so far by every
    implementer round and, in `full`, by the test-author, plus the acceptance test files. It only
@@ -139,16 +144,19 @@ nothing is committed here. The snapshot is a git tree built in a private index f
    be split. Record such paths in `RUN.md` as `overlap:`; `git diff <baseline blob> <path>` shows
    what the run changed on top. They are shown first at the gate, and a commit waits for the
    user to confirm them.
-4. **Build the snapshot** — one Bash call, `IDX` an absolute path, chained with `&&` so a failed
-   step prints no tree (`set -e` is not enough: it is ignored inside a subshell tested by `&&`
-   or `||`):
+4. **Build the snapshot.** Get the index path once and record it in `RUN.md` as `snapshot_index`:
+   `git rev-parse --path-format=absolute --git-path ticket-<task_id>.index`. Then one Bash call
+   with that path written out literally, chained with `&&` so a failed step prints no tree
+   (`set -e` is not enough: it is ignored inside a subshell tested by `&&` or `||`):
 
    ```bash
-   IDX=<run_dir>/snapshot.index; rm -f "$IDX" &&
-   GIT_INDEX_FILE="$IDX" git read-tree <base_sha> &&
-   GIT_INDEX_FILE="$IDX" git add -- <file> <file> … &&   # a file deleted from base records the deletion
-   GIT_INDEX_FILE="$IDX" git write-tree                  # prints the snapshot tree sha
+   GIT_INDEX_FILE=<snapshot_index> git read-tree <base_sha> &&
+   GIT_INDEX_FILE=<snapshot_index> git add -- <file> <file> … &&   # a file deleted from base records the deletion
+   GIT_INDEX_FILE=<snapshot_index> git write-tree                  # prints the snapshot tree sha
    ```
+
+   `read-tree` replaces whatever the index file held, so nothing is deleted first: the guard
+   refuses `rm` under `task-runs`, and permission checks refuse `rm` of a path computed by `$(…)`.
 
    Any error → outcome `blocked`, quote git's message, and never record a tree from a failed
    build. Never force-add an ignored path (`-f`). Once the tree is built, record the whitelist
@@ -157,7 +165,9 @@ nothing is committed here. The snapshot is a git tree built in a private index f
    then must be in the whitelist. A dirty path outside it means an agent changed something it
    did not report (a generated `.meta`, a touched config) — stop, outcome `blocked`, list the
    paths. Do not widen or narrow the whitelist silently. Pre-existing dirt and `test_dirt:`
-   (Step 9) are expected and fine.
+   (Step 9) are expected and fine — so is a path under `generated_paths` of `pipeline.config.json`
+   that no agent reported: the engine or the test runner rewrites those on every run; record it
+   as `test_dirt:`.
 6. **Verify the frozen set:** recompute `sha256` for the criteria file and every acceptance test.
    Any mismatch → stop the run, outcome `tampered`, and say exactly which file changed.
 7. **Check the commit guards now, not after the review.** Find what would guard the commit: git
@@ -167,7 +177,7 @@ nothing is committed here. The snapshot is a git tree built in a private index f
    `.claude/task-flow-rules.md`. Check the snapshot against what each one enforces — e.g. a guard
    demanding a `.meta` beside every new Unity asset is checked against
    `git diff --name-status --no-renames --diff-filter=A <base_sha> <tree>`. Run a git-native hook
-   against the snapshot (`GIT_INDEX_FILE=<run_dir>/snapshot.index git hook run pre-commit`) only if
+   against the snapshot (`GIT_INDEX_FILE=<snapshot_index> git hook run pre-commit`) only if
    you have read the whole script, it neither rewrites files nor runs a git command that writes,
    and it does not hand off to a framework (pre-commit, lint-staged/husky, lefthook) — those stash
    or check out "unstaged" changes, which under the snapshot index are the user's dirty files.
@@ -200,6 +210,11 @@ Run every part. For each acceptance criterion, resolve one of:
   comment the user orders, and it does not become silence.
 
 Record the per-criterion outcome table in `RUN.md`.
+
+**Tests already failing on `base_sha`.** If the caller's instructions name a file listing them
+(unattended runs), a failure listed there is pre-existing: report it apart, under "failing
+before the run", and never count it against the run or the reviewer's verdict. An acceptance
+test is never on that list — it did not exist on `base_sha`.
 
 **Test dirt.** Every test run — this one, the red phase in Step 6, and whatever the reviewer runs
 in Step 10 — can write files. Take `status` right before and after each run and re-hash the
@@ -306,10 +321,50 @@ Task status: unchanged | changed to <status> | cannot change: <reason>
 Task comment: none | posted <id> | sent, not confirmed | handed to user
 ```
 
+In an unattended run the `git:` line reads `not committed (unattended — the caller publishes)`,
+`Task status:` and `Task comment:` read `unchanged (unattended)` and `none (unattended)`, a
+`manual` criterion reads `NOT PROVEN — needs a human look`, and two blocks follow the header
+lines, before the criteria: `Assumptions:` (every decision taken instead of a question — what,
+the alternative, why; `none` if there were none) and, if the ticket asked for any, `Not done in
+an unattended run:` (its publishing instructions).
+
 For `probe`, leave out the reviewed-tree, `git:` and `Changed:` lines. The `git:`, `Task status:`
 and `Task comment:` lines describe the state at the moment of writing; update them after every
 action below. Criteria are quoted from the approved file, verbatim — re-verify its hash before
 building the report from it. Never write a bare "done". The criterion table is the report.
+
+### Unattended end — instead of 12.2–12.6
+
+An unattended run never reaches the gate below: after `REPORT.md`, write two files for the
+caller and end. Nothing of 12.2–12.6 runs.
+
+1. `<run_dir>/commit-msg.txt` — for `accepted` and `stopped` only: a message in the repository's
+   convention (`git log --oneline -10`), first line ending with ` (<task_id>)`, an optional short
+   body; no trailers, the caller adds them.
+2. `<run_dir>/RESULT.json`:
+
+   ```json
+   {
+     "task_id": "<task_id>",
+     "outcome": "accepted | stopped | blocked | tampered | probe",
+     "mode": "fix | full | probe",
+     "base_sha": "<base_sha>",
+     "reviewed_tree": "<reviewed_tree, or null if no tree was reviewed>",
+     "whitelist": ["<every whitelisted path>"],
+     "rounds": 1,
+     "not_proven": ["AC3"],
+     "not_met": ["AC4"],
+     "manual": ["AC5"],
+     "notes": ["<run_dir>/02-criteria.approved.md", "<run_dir>/04-review-1.md"],
+     "report": "<run_dir>/REPORT.md",
+     "commit_msg": "<run_dir>/commit-msg.txt, or null",
+     "blocked_reason": "<one line, or null>"
+   }
+   ```
+
+   `notes` are the files 12.3.6 would carry with a commit. Paths are absolute.
+3. Re-run the Step 8.2 check once more — the last agent had Bash — and end with one line: the
+   absolute path of `RESULT.json`.
 
 ### 2. Stop and show what is ready
 
