@@ -6,7 +6,7 @@ argument-hint: "[topic or idea]"
 
 # Brainstorm — turn an idea into a design through dialogue
 
-Collaborative and conversational. The deliverable is a validated design captured in a brainstorm doc; implementation is a separate decision at the end. If `$ARGUMENTS` is non-empty, it's the topic — start from it instead of asking what to brainstorm.
+Collaborative and conversational. The deliverable is a validated design captured in a brainstorm doc plus a standalone implementation plan; implementation is a separate decision at the end, made by the user. If `$ARGUMENTS` is non-empty, it's the topic — start from it instead of asking what to brainstorm.
 
 ## Custom rules
 
@@ -16,7 +16,7 @@ If `.claude/brainstorm-rules.md` exists in the project, Read it before starting.
 
 Gauge the size before committing to the full process:
 
-- **Small** — a utility, a single component, an isolated tweak. Compress: quick context check, at most one clarifying question, one recommended approach with an alternative mentioned in passing, design in a single message. No brainstorm doc unless the user asks. Don't ceremony a 20-line change.
+- **Small** — a utility, a single component, an isolated tweak. Compress: quick context check, at most one clarifying question, one recommended approach with an alternative mentioned in passing, design in a single message. No brainstorm doc or plan file unless the user asks. Don't ceremony a 20-line change — but still end by asking whether to implement now, not by implementing.
 - **Large** — a feature, a system, an architectural decision. Full process below.
 
 When genuinely unsure, ask the user which depth they want.
@@ -73,21 +73,36 @@ Backtrack freely when something doesn't hold up — a wrong turn discovered in s
 
 ## Phase 5 — Capture and hand off
 
+The brainstorm ends with two files on disk and a question — never with implementation already running. Do not call EnterPlanMode and do not start editing code on your own: a plan that lives only in this session dies with it, and the user may want to run it later, in another terminal, worktree or machine.
+
 1. Write the brainstorm doc to `docs/brainstorms/YYYY-MM-DD-<slug>.md` (use the project's established docs location if it has one):
    - problem statement and constraints
    - chosen approach and why
    - rejected alternatives with one-line reasons
    - the validated design (sections from Phase 4)
    - open questions
-   The doc must survive the session regardless of what happens next.
-2. Then ask via AskUserQuestion — "Design is captured. What's next?":
-   - **Plan mode** — EnterPlanMode for structured implementation planning
-   - **Start now** — implement directly; fine for small scope
-   - **Stop here** — the doc is saved; the user returns to it later
+2. Write the implementation plan next to it — `docs/brainstorms/YYYY-MM-DD-<slug>-plan.md`. Its reader is a fresh session with no memory of this dialogue, so it must stand on its own:
+   - a link to the brainstorm doc and a 2–3 sentence goal
+   - context the executor would otherwise have to rediscover: repo/project path, key files and entry points, conventions that matter
+   - ordered steps; each names the files it touches and how to verify it is done (a command, a test, an observable behavior)
+   - acceptance criteria for the whole change
+   - out of scope — what was deliberately left out, so the executor doesn't "helpfully" add it
+   - open questions the executor must ask the user about rather than decide
+   Concrete over generic: real paths, real names, real commands. No step that just says "implement X".
+3. Show both paths and the ready-to-paste launch line, using the plan's absolute path:
+   ```
+   claude "Implement the plan in /abs/path/to/…-plan.md — read it and the brainstorm doc it links first"
+   ```
+4. Ask via AskUserQuestion — "Design and plan are saved. What's next?":
+   - **Save only** — stop here; the user picks the plan up whenever and wherever it suits them
+   - **Start here** — implement in this session, following the plan file step by step
+   - **Revise the plan** — adjust the plan file first, then ask again
+
+   Start implementation only on an explicit **Start here**.
 
 ## Early exit
 
-If mid-process the user says "enough, just do it" or clearly wants to move on: summarize the decisions made so far in 3–5 bullets, write the brainstorm doc from what's known, and proceed to their requested action. Don't force the remaining phases.
+If mid-process the user says "enough, just do it" or clearly wants to move on: summarize the decisions made so far in 3–5 bullets, write the brainstorm doc and the plan from what's known, and proceed to their requested action. Don't force the remaining phases. An explicit "just do it" counts as **Start here**; "enough" alone does not — save and ask.
 
 ## Key principles
 

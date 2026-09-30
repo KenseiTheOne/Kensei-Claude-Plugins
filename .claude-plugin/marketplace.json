@@ -17,7 +17,7 @@
       "name": "kensei-toolkit",
       "source": "./plugins/kensei-toolkit",
       "description": "Skill collection — tracker task runner, Unity review, annotated diff tour, session learn, todo capture, brainstorm",
-      "version": "1.8.0",
+      "version": "1.8.1",
       "author": {
         "name": "Kensei"
       }
