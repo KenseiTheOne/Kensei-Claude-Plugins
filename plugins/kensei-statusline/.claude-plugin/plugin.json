@@ -5,7 +5,7 @@
   "author": {
     "name": "Kensei"
   },
-  "repository": "https://github.com/KenseiTheOne/Kensei-Claude-Plugins",
+  "repository": "https://github.com/KenseiTheOne/kensei-claude-plugins",
   "license": "MIT",
   "keywords": ["statusline", "tokens", "cost", "git", "subagents"]
 }

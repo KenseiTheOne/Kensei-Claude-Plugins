@@ -5,7 +5,7 @@ Claude Code plugin marketplace.
 ## Installation
 
 ```bash
-/plugin marketplace add KenseiTheOne/Kensei-Claude-Plugins
+/plugin marketplace add KenseiTheOne/kensei-claude-plugins
 ```
 
 Then install any plugin:

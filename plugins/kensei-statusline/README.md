@@ -35,7 +35,7 @@ main │ ●2 +3 ?1 │ +310 -45 │ 12 files 1.2K loc
 ## Installation
 
 ```bash
-/plugin marketplace add KenseiTheOne/Kensei-Claude-Plugins
+/plugin marketplace add KenseiTheOne/kensei-claude-plugins
 /plugin install kensei-statusline@kensei-claude-plugins
 ```
 
