@@ -1,11 +1,11 @@
 {
   "name": "kensei-statusline",
-  "version": "1.4.0",
-  "description": "Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats",
+  "version": "1.5.0",
+  "description": "Multi-line statusline: model, context, tokens, API cost, usage limits (incl. per-model ones like Fable), subagents, git info, project stats",
   "author": {
     "name": "Kensei"
   },
   "repository": "https://github.com/KenseiTheOne/kensei-claude-plugins",
   "license": "MIT",
-  "keywords": ["statusline", "tokens", "cost", "git", "subagents"]
+  "keywords": ["statusline", "tokens", "cost", "usage-limits", "git", "subagents"]
 }

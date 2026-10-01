@@ -1,92 +1,144 @@
 ---
 name: learn
-description: Analyze the current session and propose additions to project CLAUDE.md — new conventions, useful commands, gotchas, project-specific quirks. Run at the end of a session to capture what was learned. User-invoked only.
+description: Review the current session and propose durable takeaways, each routed to one home — project CLAUDE.md for rules every contributor and headless run needs, the auto-memory for facts about the user, ~/.claude/CLAUDE.md for preferences that hold in every project. Deduplicates against all three, writes only what the user approves. Run at the end of a session. User-invoked only.
 disable-model-invocation: true
-argument-hint: "[path/to/CLAUDE.md]"
+argument-hint: "[path/to/CLAUDE.md | focus]"
 ---
 
-# Learn — capture session takeaways into CLAUDE.md
+# Learn — capture session takeaways
 
-Analyze the current session and propose additions to a project `CLAUDE.md` so future Claude sessions in this codebase start better-informed. Manual, user-triggered.
+Turn what this session taught into a few durable notes so future sessions start better informed.
+Each note goes to exactly one place, nothing is written before the user approves it, and a short
+honest "nothing worth keeping" is a good outcome.
 
-**Do not modify `CLAUDE.md` until the user has approved the items.** Approval-first; no silent writes.
+Reply in the user's language. Text written into a file matches that file's existing language; a
+new file takes the user's language.
 
-## Step 1 — Locate the target file
+## Step 1 — Read what is already recorded
 
-Resolve the target path in this order:
+Read all of these before mining, so every proposal is checked against them:
 
-1. If `$ARGUMENTS` looks like a file path → use it.
-2. Else look for `CLAUDE.md` in the current working directory, then walk up parents until one is found or the repo root is reached.
-3. If none exists, ask the user: create one in the cwd, in the repo root, or skip.
+- **Project rules:** `$ARGUMENTS` when it is a file path; otherwise the `CLAUDE.md` in the working
+  directory or the nearest parent up to the repo root, plus any nested `CLAUDE.md` in directories
+  this session worked in, and `CLAUDE.local.md` if present.
+- **Global rules:** `~/.claude/CLAUDE.md`.
+- **Auto-memory:** the memory directory of this project — the one whose `MEMORY.md` is in the
+  session context; if none is shown, `~/.claude/projects/<slug>/memory/`, where `<slug>` is the
+  absolute repo root path (or working directory outside a repo) with every character other than a
+  letter or digit replaced by `-`, e.g. `/Users/me/app` → `-Users-me-app`. Read `MEMORY.md` now;
+  it is an index of one-line pointers, and the memory files behind it are opened in Step 2.
 
-Read the existing file (if any). You **must** know its current contents — you'll be checking against it to avoid duplicates.
+Missing files are fine; note which ones exist. If there is no project `CLAUDE.md`, the target is
+`<repo root>/CLAUDE.md` (the working directory outside a repo), created on approval.
 
 ## Step 2 — Mine the session
 
-Look through the conversation for **durable, project-scoped facts** in these buckets:
+When `$ARGUMENTS` is text other than a file path ("only the build gotchas"), it narrows the search
+to that focus. Look for durable facts:
 
-- **Conventions** — preferences the user stated explicitly (`"we never use X"`, `"always Y in this repo"`) that should constrain future code here.
-- **Commands** — non-obvious build / test / lint / run / deploy commands specific to this project (not generic `npm test`).
-- **Gotchas** — surprising behavior, environment quirks, broken or wrapped tools, files that look unused but aren't, paths that need special handling.
-- **Architecture pointers** — `"module X handles Y"`, `"entry point is Z"` — only when hard to discover from a quick directory listing.
-- **Mistakes & corrections** — wrong assumptions Claude made that got corrected, *when the rule generalizes beyond the immediate task*.
+- **Conventions** the user stated ("we never use X here", "always Y").
+- **Commands** for build, test, lint, run or deploy that are specific to this project.
+- **Gotchas** — surprising behavior, wrapped or broken tools, paths that need special handling.
+- **Architecture pointers** that a quick directory listing would not reveal.
+- **Corrections** — a wrong assumption the user corrected, when the lesson outlives this task.
+- **About the user** — preferences, working style, role, recurring context across their projects.
 
-**Skip aggressively:**
+Keep a candidate only when it will still matter in a month and cannot be learned in a minute from
+the code, `git log`, `--help` or the README. Task-specific details belong in the commit, not here.
 
-- Anything specific to the current task / bug / PR (belongs in the commit, not in `CLAUDE.md`).
-- Anything already documented in the existing project `CLAUDE.md` *or* the user's global `CLAUDE.md` (visible in the loaded `claudeMd` context — check both before proposing).
-- Anything trivially derivable from `git log`, `--help`, `package.json`, `README`, or 30 seconds of code reading.
-- Style/git preferences that already live in user-global rules.
-- Personal context that belongs in `MEMORY.md`, not project rules — facts about *the user* go to memory; facts about *the project* go here.
+Before proposing a candidate, open the memory files whose `MEMORY.md` line matches its topic.
+Drop anything already recorded in Step 1 sources or those files. When a candidate refines an
+existing entry, propose an update to that entry instead of a new one.
 
-**Quality bar:** prefer **3 strong entries** over 15 weak ones. If the session yielded nothing durable, say so honestly and stop — don't pad.
+Never propose secrets, tokens, credentials, private or signed URLs, internal hostnames, or personal
+data about third parties; restate the lesson without them or drop it.
 
-## Step 3 — Present proposals
+Aim for a few strong items; three good ones beat fifteen weak ones. If nothing qualifies, say so in
+one sentence and stop.
 
-First print a numbered list of **all** candidates so the user can read them in full. For each candidate:
+## Step 3 — Route each candidate
+
+| Destination | What goes there |
+|---|---|
+| **Project `CLAUDE.md`** (or the `$ARGUMENTS` path) | Rules, conventions, commands and gotchas every contributor and every headless run in this repo needs. Checked into the repo, so nothing personal. |
+| **Auto-memory** | Facts about the user: preferences, feedback on how to work, their role, references they use, project context that is theirs rather than the repo's. Seen only in this project. |
+| **`~/.claude/CLAUDE.md`** | A preference about the user that clearly applies in every project (reply language, diff display, publishing habits). The only file every project reads. |
+
+When a candidate fits `CLAUDE.md` and memory, choose `CLAUDE.md` if a teammate or a headless run
+would need it. When a fact about the user could go to memory or the global file, choose the global
+file only when it plainly holds outside this repo; otherwise memory, and say in the proposal that
+it stays in this project.
+
+## Step 4 — Show proposals and ask
+
+Print every proposal, grouped by destination, numbered across groups:
 
 ```
-N. [Section] Proposed text (1–3 lines, ready to paste)
-   Source: <one short sentence — where in the session this came from>
+### CLAUDE.md — <path>   (new file, when it does not exist yet)
+1. [<section>] <text, 1–3 lines, ready to paste>   (new | updates "<existing line>")
+   Source: <where in the session this came from>
+
+### Auto-memory — <memory dir>   (this project only)
+2. <file>.md (new | update) · type: feedback — <one-line description>
+   <body, 1–3 lines>
+   Source: <...>
+
+### Global CLAUDE.md — ~/.claude/CLAUDE.md
+3. [<section>] <text>   (new | updates "<existing line>")
+   Source: <...>
 ```
 
-Group by suggested section heading. If the existing `CLAUDE.md` already has matching sections, use those exact headings; don't invent new ones when an existing one fits.
+Use the existing `CLAUDE.md` section headings when one fits.
 
-## Step 4 — Get approval via AskUserQuestion
+Then ask with `AskUserQuestion`. Each question covers one destination, and its text names it
+("Add to the project CLAUDE.md?", "Save to auto-memory (this project only)?", "Add to the global
+~/.claude/CLAUDE.md?"; header `CLAUDE.md`, `Memory` or `Global`), so a tick is consent for that
+destination; items for different destinations never share a question. A question holds 2–4
+options and one call holds up to 4 questions, so:
 
-After printing the list, **call `AskUserQuestion`** for the actual selection — don't ask in plain text. Build options dynamically from the proposals:
+- one `multiSelect` question per destination, one option per item: label `N. <short name>`,
+  description = the first line of the text;
+- a destination with more than 4 items splits into batches of up to 4 (`Memory 1/2`,
+  `Memory 2/2`), balanced so no batch holds a single item;
+- a destination with exactly one item gets a single-select question with options `Apply` and
+  `Skip`, the item in the question text;
+- all questions go in one call when they fit in 4; otherwise the rest go in a later call.
 
-- **`Question:`** `"Which proposals should I add to CLAUDE.md?"`
-- **`Header:`** `"Apply"`
-- **`multiSelect: true`**
-- **Options:**
-  - One option per proposal (label = `"N. <short name>"`, description = the section + first line). Include as many as the tool's option cap allows.
-  - If there are more proposals than option slots, collapse the rest into a single `"Remaining (K items)"` option whose description lists their numbers. The user can drill in via "Other".
-  - Always include `"All"` (label, no number) and `"None"` as the last two options.
+Ticked items are applied; unticked are skipped. The built-in **Other** field takes edits in plain
+words — a new wording (`2: <new text>`) or a move to another destination (`2: global`); say so in
+the question text, apply the edits, and show the changed lines once before writing.
 
-**Interpreting the answer:**
+When `AskUserQuestion` is unavailable, ask the same question in plain text and wait for the
+answer; never skip the choice.
 
-- `"All"` ticked → apply every proposal (ignore other ticks).
-- `"None"` ticked → write nothing (ignore other ticks).
-- Specific items ticked → apply only those.
-- "Other" / free text → parse as a comma list (`1,3,5`) or per-item edits.
+## Step 5 — Write the approved items
 
-If the user wants to tweak the wording of a specific item, accept their edit and use the edited version when applying.
+**Project or global `CLAUDE.md`:** one targeted `Edit` per item under its section, or a new
+section at the end. Touch only the lines you add or update. If the file does not exist, `Write` it
+at the path shown in the group header with only the approved sections.
 
-## Step 5 — Apply
+**Auto-memory:** one fact per file, named `<kebab-name>.md`. Updating an existing file is preferred
+over a new one. Mirror the frontmatter of existing memory files; at minimum:
 
-For each approved item:
+```markdown
+---
+name: <kebab-name>
+description: <one line — what the fact is, used to judge relevance later>
+metadata:
+  type: user | feedback | project | reference
+---
 
-- If a matching section already exists in `CLAUDE.md`, append the entry there with a single targeted `Edit`.
-- If not, add a new section at the end of the file.
-- Do not reformat or rewrap unrelated content. Touch only the lines you're adding.
+<the fact>
 
-If `CLAUDE.md` doesn't exist yet and the user said to create it, `Write` a minimal new file containing only the approved sections — no boilerplate, no placeholder headings the user didn't ask for.
+**Why:** <what in the session prompted it>
 
-## Step 6 — Confirm
+**How to apply:** <when and how it should change behavior>
+```
 
-One- or two-sentence summary: how many items were added, to which file, and whether any were skipped or hand-edited. No paragraph-long retrospective.
+`Why` and `How to apply` are for `feedback` and `project`; `user` and `reference` can be the fact
+alone. Then add or update one line in `MEMORY.md`: `- [Title](<file>.md) — <short hook>`.
+`MEMORY.md` holds only these pointers, never the facts themselves; create it if it is missing.
 
-## Language
+## Step 6 — Report
 
-Respond in the same language the user has been using in the session. New `CLAUDE.md` content should match the language of the existing file; if creating the file fresh, match the user's language.
+One or two sentences: what was written where (file paths), what was skipped or reworded.

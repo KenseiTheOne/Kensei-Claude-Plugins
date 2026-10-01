@@ -1,115 +1,213 @@
 ---
 name: todo
-description: Mine the current session for actionable todos and update a TODO.md artifact — unfinished work, deferred items, identified bugs, "we should also..." callouts, open questions. Run at the end of a session to capture loose ends. User-invoked only.
+description: "Collect the loose ends of the current session — unfinished work, deferred items, bugs found, \"we should also…\", open questions — as task drafts with evidence, let the user pick, then deliver them: personal items to the Todoist Inbox (or a paste-ready block), project work to a ClickUp list the user picks, or to a markdown file given as the argument. User-invoked only."
 disable-model-invocation: true
-argument-hint: "[path/to/TODO.md]"
+argument-hint: "[path/to/notes.md | focus]"
 ---
 
-# Todo — collect session loose ends into TODO.md
+# Todo — turn session loose ends into tasks
 
-Analyze the current session and propose entries for a project `TODO.md` so nothing actionable falls through the cracks. Manual, user-triggered.
+At the end of a session, things get said and left behind: a bug noticed and not fixed, "we should
+also…", a question postponed. This skill finds them, drafts each as a task the user can act on
+without rereading the conversation, and puts the chosen ones where the user already keeps tasks.
 
-**Do not modify `TODO.md` until the user has approved the items.** Approval-first; no silent writes.
+The user approves every task before it exists anywhere. A task is created in Todoist, ClickUp or a
+file only when the user selected it, and its destination, in this run.
 
-## Step 1 — Locate the target file
+Destinations:
 
-Resolve the target path in this order:
+- **Personal** items go to the **Todoist Inbox** — the user's single capture funnel on every device.
+- **Project work** goes to **ClickUp**, into a list the user picks in this run. The workspace and
+  lists are found at run time (Step 4).
+- If `$ARGUMENTS` is a path ending in `.md`, every chosen item is appended to that file instead
+  (file mode, Step 6c). Any other argument text ("only bugs", "the auth work") is a focus hint for
+  Step 1, and delivery follows the destinations above.
 
-1. If `$ARGUMENTS` looks like a file path → that path **is** the target. If the file exists, read it. If it doesn't, create it there in Step 5 — do **not** ask the user to pick a different location. Honoring the explicit argument trumps discovery.
-2. Else look for `TODO.md` in the current working directory, then walk up parents until one is found or the repo root is reached.
-3. If still nothing, ask the user: create one in the cwd, in the repo root, or skip.
+## Step 1 — Mine the session
 
-When you found an existing file, read it in full. You **must** know its current contents — you'll be checking against it to avoid duplicate entries.
+Read through the whole conversation for actionable items that were left for later:
 
-## Step 2 — Mine the session
+- **Bugs** — defects seen and not fixed: a failing edge case, an error the user said to handle
+  later.
+- **Unfinished work** — steps of the task that were planned and not done, or done partly.
+- **Deferred ideas** — "we should also add Y", "next time let's wire up Z".
+- **Tech debt** — cleanup the user agreed is needed and postponed.
+- **Open questions** — decisions the user postponed ("ask the team about Y"), or unknowns that
+  blocked a clean answer.
+- **Follow-ups** — verification, tests, docs or release steps the finished work implies and did
+  not include.
+- **Personal** — non-project reminders that came up ("надо продлить подписку", "read that
+  article").
 
-Look through the conversation for **actionable, deferrable items** in these buckets:
+Phrases that often mark them: "later", "next time", "remind me", "we should", "would be nice",
+"for now", "leave it"; «потом», «позже», «надо будет», «не сейчас», «доделать», «пока что»,
+«напомни».
 
-- **Bugs** — defects spotted but not fixed this session ("we noticed X is broken but moved on", failing edge case left for later, error case the user said to handle later).
-- **Features** — work the user mentioned wanting but didn't ask to do now ("we should also add Y", "next time let's wire up Z").
-- **Refactor / tech debt** — code smells, duplication, abstraction the user agreed needs cleanup but deferred ("ugly but works", "TODO: simplify this later").
-- **Open questions** — decisions the user explicitly postponed ("need to think about X", "ask the team about Y"), or unknowns that blocked a clean answer this session.
-- **Follow-ups from completed work** — verification steps, missing tests, docs updates, or related cleanup that the just-finished task implies but didn't include.
+Leave out:
 
-**Trigger phrases to watch for:**
-- English: "todo", "fix later", "later", "next time", "remind me", "we should", "we could", "would be nice", "for now", "leave it"
-- Russian (with glosses): "потом" (later), "позже" (later), "напоминай" (remind me), "надо будет" (will need to), "не сейчас" (not now), "позднее" (later), "доделать" (finish up), "пока что" (for now)
+- anything finished in this session;
+- items the user rejected or said do not matter;
+- vague wishes with no concrete action ("the code could be cleaner").
 
-**Skip aggressively:**
+Each draft is a self-contained task title — a verb, the object, and enough context to act on it a
+week later (repo, file, feature) — plus a one-line **evidence** note: where in the session it came
+from, with a short quote or the fact behind it, e.g. `user: «кэш прикрутим потом»` or
+`guard_test.py: test_bundle_flags fails on -fn, left for later`.
 
-- Anything already done this session (it's in the diff, not the todo list).
-- Anything already present in the existing `TODO.md` (check before proposing — match by intent, not exact wording).
-- Items the user explicitly rejected or said don't matter.
-- Vague aspirations with no concrete action ("the codebase could be better").
-- Personal reminders unrelated to the project (those belong in a personal task manager, not project `TODO.md`).
-- Items better suited to the project's issue tracker if the user has one — list these in Step 3 under a separate `[Issue tracker]` group **outside** the AskUserQuestion options, and note them in the Step 6 confirm. Do not add them to `TODO.md` unless the user explicitly asks.
+Three concrete tasks beat fifteen vague ones. If the session left nothing actionable, say so in one
+sentence and stop.
 
-**Quality bar:** prefer **3 concrete entries** over 15 vague ones. Each item should be specific enough that a future session can act on it without re-reading this conversation. If the session yielded nothing actionable, say so honestly and stop — don't pad.
+## Step 2 — Deduplicate and classify
 
-## Step 3 — Present proposals
+Merge drafts that describe the same action, keeping the clearest wording and both evidence lines.
+In file mode, read the target file in full and drop drafts already present there (match by intent,
+not wording).
 
-Print a numbered list of **all** candidates so the user can read them in full. For each candidate:
+Mark each draft with its destination:
+
+- **ClickUp** — work on a project tracked in ClickUp: the repo's project rules, the session or the
+  ticket being worked on point to a ClickUp task, list or space.
+- **Todoist** — everything else: personal errands, learning, the user's own machine and tools, and
+  project work on something not tracked in ClickUp.
+
+When a draft could go either way, pick the likelier one and add `(?)` to its destination so the
+user sees it is a guess. In file mode the destination is the file for every draft; skip this mark.
+
+## Step 3 — Show the drafts
+
+Print every draft as a numbered list, grouped by destination:
 
 ```
-N. [Category] Proposed entry (one line, ready to paste as a checkbox item)
-   Source: <one short sentence — where in the session this came from>
+ClickUp
+1. Handle -fn bundled flag in guard push detection
+   evidence: guard_test.py: test_bundle_flags fails on -fn, left for later
+
+Todoist
+2. Renew the Apple developer membership (?)
+   evidence: user: «надо продлить подписку, истекает в ноябре»
 ```
 
-Group by category (Bugs / Features / Refactor / Open questions / Follow-ups). If the existing `TODO.md` already has matching section headings, use those exact headings; don't invent new ones when an existing one fits.
+## Step 4 — Find ClickUp lists
 
-## Step 4 — Get approval via AskUserQuestion
+Run this step when a draft is marked ClickUp and this is not file mode. Looking the lists up now
+lets Step 5 ask for the items and the list in one call.
 
-After printing the list, **call `AskUserQuestion`** for the actual selection — don't ask in plain text. Build options dynamically from the proposals:
+1. **Tools.** The ClickUp tools come from whichever MCP server the user connected; their names end
+   in `clickup_search`, `clickup_get_workspace_hierarchy`, `clickup_create_task`. They are often
+   deferred: load them with `ToolSearch` (query `clickup`). If there are none, say in one line
+   that ClickUp is not reachable; those drafts get no question in Step 5 and are
+   printed as a paste-ready block in Step 6b.
+2. **Workspace.** Take the workspace, space or list named in the project rules (`CLAUDE.md`,
+   `.claude/*rules*.md`) or in `~/.claude/CLAUDE.md`, or the one the session's ClickUp task
+   belongs to. Otherwise read `clickup_get_workspace_hierarchy`: with one workspace, use it; with
+   several, ask which in a single-select `AskUserQuestion` first (up to 4 workspaces as options;
+   with more, the 3 likeliest and the rest through Other).
+3. **Lists.** With read-only calls (`clickup_search`, `clickup_get_workspace_hierarchy`) pick up
+   to 3 lists that fit the project, repo or ClickUp task the session was about.
 
-- **`Question:`** `"Which todos should I add to TODO.md?"`
-- **`Header:`** `"Add"`
-- **`multiSelect: true`**
-- **Options:**
-  - One option per proposal (label = `"N. <short name>"`, description = the category + first line). Include as many as the tool's option cap allows.
-  - If there are more proposals than option slots, collapse the rest into a single `"Remaining (K items)"` option whose description lists their numbers (e.g., `"items 4, 5, 6, 7"`).
-  - Always include `"All"` and `"None"` as the last two options.
+## Step 5 — Let the user choose
 
-**Interpreting the answer:**
+Ask with `AskUserQuestion`. Each question covers one destination, and its text names it ("Add to
+the Todoist Inbox?", "Create in ClickUp?", "Append to notes.md?"), so a tick is consent for that
+destination; drafts for different destinations never share a question. A question holds 2–4
+options and one call holds up to 4 questions, so:
 
-- `"All"` ticked → apply every proposal (ignore other ticks).
-- `"None"` ticked → write nothing (ignore other ticks).
-- `"Remaining (K items)"` ticked → immediately fire a **second `AskUserQuestion`** containing only the collapsed items (same multiSelect pattern, with `"All"`/`"None"`). Merge the user's picks there with any specific items they also ticked in the first round.
-- Specific items ticked → apply only those.
-- "Other" / free text → parse as a comma list (`1,3,5`) or per-item wording edits.
+- one `multiSelect` question per destination, one option per draft: label `N. <short title>`,
+  description = the evidence line;
+- a destination with more than 4 drafts splits into batches of up to 4 (`ClickUp 1/2`,
+  `ClickUp 2/2`), balanced so no batch holds a single draft;
+- a destination with exactly one draft gets a single-select question with options `Add` and
+  `Skip`, the draft and its evidence in the question text;
+- ClickUp adds one single-select question, "Create the chosen ClickUp tasks in which list?":
+  options = up to 3 lists — the Step 4 lists, or when none fit, those of the likeliest space —
+  label = list name, description = space / folder, plus `Don't create — print them`;
+- all questions go in one call when they fit in 4; otherwise the rest go in a later call, and the
+  list question rides in the same call as the first ClickUp batch and covers every ClickUp batch.
 
-If the user wants to tweak the wording of a specific item, accept their edit and use the edited version when applying.
+Each list option and `Create here` (below) end with ` [create-task]` (`Backlog [create-task]`),
+since picking a list is what commits to the create; draft options, `Add`, `Skip` and
+`Don't create` carry no tag. When `/ticket` ran earlier in the session, its guard allows a task
+create only after the user picked an option with that tag.
 
-## Step 5 — Apply
+No option slot is filler. Leaving a question unticked means none from that batch; the built-in
+**Other** field takes edits in plain words — a new wording ("2: продлить до 15 ноября"), a
+destination switch ("3 → Todoist"), an extra task, or a list name. Apply edits before Step 6 and
+show the changed lines once; an edit the user typed is their consent for Todoist or the file it
+names, while a ClickUp create still needs a picked `[create-task]` option.
 
-For each approved item:
+When `AskUserQuestion` is unavailable, ask the same question in plain text and wait for the
+answer; never skip the choice. With no option to pick, a ClickUp create needs the user to type
+the command and the list («создай задачи в Backlog»).
 
-- Format as a markdown checkbox: `- [ ] <entry text>`.
-- If a matching section already exists in `TODO.md`, append the item there with a single targeted `Edit`.
-- If not, add a new section at the end of the file using the category name as the heading (e.g., `## Bugs`).
-- Do not reformat or rewrap unrelated content. Touch only the lines you're adding.
-- Do not check off, remove, or reorder existing items — this skill only adds.
+A ClickUp create that no picked option covers — a list typed into Other, a draft moved to ClickUp
+by an edit — gets one confirm question first: resolve the list by name (read-only, Step 4 lookup
+if none ran), then ask single-select "Create N tasks in <list> (<space / folder>)?" with options
+`Create here [create-task]` and `Don't create — print them`.
 
-If `TODO.md` doesn't exist yet (either the user said to create it in Step 1, or `$ARGUMENTS` named a missing path), `Write` a new file with this exact scaffold and nothing more:
+If nothing is chosen, say so in one line and stop.
 
-```markdown
-# TODO
+## Step 6 — Deliver
 
-## <Category 1>
+### 6a. Todoist items
 
-- [ ] <approved item>
-- [ ] <approved item>
+1. **Todoist MCP or CLI connected.** Look for Todoist tools among the callable and the deferred
+   tools (load deferred ones with `ToolSearch`, query `todoist`), and for a CLI
+   (`command -v todoist td`). A CLI counts only when its `--help` or version output names Todoist:
+   Homebrew's `td`, for one, is an unrelated local todo list. If one is available, create each
+   chosen item as a task in the Inbox with the title as content and the evidence line as its
+   description. Set no project, labels, priority or due date unless the user asked for them in
+   this run. If the tool can list Inbox tasks, skip items already there and say which.
+2. **Otherwise**, print a paste-ready block. Todoist turns a multi-line paste into one task per
+   line after a single confirmation in its own app:
 
-## <Category 2>
+   ````
+   ```text
+   Renew the Apple developer membership
+   Read the Unity 6.3 ECS migration notes
+   ```
+   ````
 
-- [ ] <approved item>
-```
+   One task per line, plain text: no bullets, checkboxes or numbering. Todoist parses `#word`,
+   `@word`, `p1`–`p4` and date words ("tomorrow", "15 Nov") on paste; keep them out of titles
+   unless the user wants that project, label, priority or date. Add one line under the block:
+   "Paste into the Todoist Inbox; it offers to add N tasks." Evidence lines stay in this reply.
 
-Only include category sections that have at least one approved item. No description blurb under `# TODO`, no placeholder sections, no horizontal rules.
+### 6b. ClickUp items
 
-## Step 6 — Confirm
+When ClickUp was not reachable in Step 4, or the user picked `Don't create — print them`, print
+these items as a paste-ready block like 6a. Otherwise, in the list chosen in Step 5:
 
-One- or two-sentence summary: how many items were added, to which file, and whether any were skipped, hand-edited, or flagged as better suited to an issue tracker. No paragraph-long retrospective.
+1. **Check for duplicates.** Search the chosen list read-only (`clickup_search` or
+   `clickup_filter_tasks`) for open tasks with the same intent. Leave matches out, and name each
+   one with its link in the report.
+2. **Create**, only after the list is chosen in this run. Each task gets `name` and `list_id`, and
+   a `markdown_description` holding the evidence line plus where it came from (repo, branch,
+   related ClickUp task link if the session had one). Leave `status`, `assignees`, `priority`,
+   `tags`, dates and custom fields at the list defaults unless the user asked for them in this run.
+   One task: `clickup_create_task`. Two or more: call `clickup_get_operators` first and run a bulk
+   create through `clickup_execute_operator` when one exists; otherwise one `clickup_create_task`
+   per task.
+3. If a create fails, report it with the error, stop creating, and print the remaining tasks as a
+   block; the user can pick another list in a new run.
+
+### 6c. File mode (`$ARGUMENTS` is a path)
+
+- The path is the target. If the file exists, it was read in Step 2; if not, it is created there.
+- Each chosen item becomes `- [ ] <title>`. Append it under an existing heading that fits its
+  category with a targeted `Edit`; otherwise add a `## <Category>` section at the end.
+- A new file starts with `# TODO`, then one `## <Category>` section per category that has items,
+  and nothing else.
+- Touch only the lines you add: existing items keep their text, order and check state.
+- Write items in the language of the existing file; for a new file, in the user's language.
+
+## Step 7 — Report
+
+One or two sentences: how many tasks went where, ClickUp tasks as markdown links with the task name
+as the anchor text (`[Handle -fn bundled flag](https://app.clickup.com/t/…)`), and anything skipped,
+edited, or left as a paste block.
 
 ## Language
 
-Respond in the same language the user has been using in the session. New `TODO.md` content should match the language of the existing file; if creating the file fresh, match the user's language.
+Talk to the user in the language of the session. Write task titles in that language too, unless
+the destination already uses another one (an English file, an English ClickUp list) — then match
+the destination. Quotes in evidence lines stay in their original language.

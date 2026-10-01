@@ -1,26 +1,20 @@
 {
   "name": "kensei-claude-plugins",
+  "description": "Kensei's Claude Code plugins: a statusline and a skill toolkit for tracker tasks, diff review, design brainstorms, Unity review and end-of-session capture",
   "owner": {
-    "name": "Kensei"
+    "name": "Kensei",
+    "url": "https://github.com/KenseiTheOne"
   },
   "plugins": [
     {
       "name": "kensei-statusline",
       "source": "./plugins/kensei-statusline",
-      "description": "Multi-line statusline: model, context, tokens, API cost, usage limits, subagents, git info, project stats",
-      "version": "1.4.0",
-      "author": {
-        "name": "Kensei"
-      }
+      "category": "productivity"
     },
     {
       "name": "kensei-toolkit",
       "source": "./plugins/kensei-toolkit",
-      "description": "Skill collection — tracker task runner, Unity review, annotated diff tour, session learn, todo capture, brainstorm",
-      "version": "1.8.1",
-      "author": {
-        "name": "Kensei"
-      }
+      "category": "development"
     }
   ]
 }

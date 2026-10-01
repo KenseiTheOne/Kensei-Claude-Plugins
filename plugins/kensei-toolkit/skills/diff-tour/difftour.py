@@ -3,9 +3,13 @@
 
   difftour.py collect [REF | A..B] [--out-root DIR]
       Snapshot the diff into a new run directory (patch.diff + hunks.json) and print the index
-      of its units. No argument: HEAD against the working tree, untracked files included.
-      REF: the merge-base of REF and HEAD against the working tree, untracked included (for a
-      REF that HEAD descends from, that is REF itself). A..B or A...B: that range only.
+      of its units. No argument: HEAD against the working tree, untracked files included; when
+      nothing is uncommitted, the commits HEAD has beyond its upstream (or else the default
+      branch) instead. REF: the merge-base of REF and HEAD against the working tree, untracked
+      included (for a REF that HEAD descends from, that is REF itself). A..B: that range only —
+      A and B may be commits or tree ids (a `git write-tree` result). A...B: from the merge-base
+      of two commits. Run directories go under DIR/<repo>/ (default ~/.cache/kensei-diff), private
+      to the user; the newest KEEP_RUNS per repository are kept.
   difftour.py build RUN_DIR [--open]
       Check RUN_DIR/notes.json against the snapshot, render RUN_DIR/index.html, print the
       counts and every unexplained unit. Exit 1 with the list of problems if notes.json is
@@ -34,6 +38,7 @@ import tempfile
 import webbrowser
 
 OUT_ROOT = os.path.expanduser("~/.cache/kensei-diff")
+KEEP_RUNS = 20         # run directories kept per repository; older ones are deleted by collect
 NOISE_FILE = ".claude/diff-tour-noise"
 DEFAULT_NOISE = [
     "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
@@ -50,7 +55,10 @@ DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short
 SOURCES = ("session", "inferred")
 KINDS = ("untested", "decision", "temporary", "stray")
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0"
+HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+# Subresource integrity of exactly that file: the browser refuses it if the CDN serves anything
+# else. Recompute when the version changes: curl -sL URL | openssl dgst -sha384 -binary | base64
+HLJS_SRI = "sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp"
 LANGS = {
     "cs": "csharp", "py": "python", "js": "javascript", "mjs": "javascript", "jsx": "javascript",
     "ts": "typescript", "tsx": "typescript", "json": "json", "md": "markdown", "yml": "yaml",
@@ -150,13 +158,47 @@ def take(root, spec):
     try:
         index = os.path.join(scratch, "index")
         if os.path.exists(index_path(root)):
-            shutil.copyfile(index_path(root), index)
+            # copy2, not copyfile: the copy keeps the index's mtime. git trusts an entry's cached
+            # stat only for files older than the index, so a fresh mtime would hide an edit that
+            # kept the size and landed in the same second as the last index write.
+            shutil.copy2(index_path(root), index)
         git(root, "-c", "core.splitIndex=false", "--literal-pathspecs", "add", "-N",
             "--pathspec-from-file=-", "--pathspec-file-nul", index=index,
             stdin=b"\0".join(untracked))
         return git(root, "diff", *DIFF_FLAGS, "-M", spec["sha"], "--", index=index), skipped
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def fallback_refs(root):
+    """Where to look when nothing is uncommitted: the upstream (commits not pushed yet), then
+    the default branch (the branch's own work)."""
+    refs = [git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}",
+                ok=(0, 128)).decode().strip(),
+            git(root, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD",
+                ok=(0, 1, 128)).decode().strip(),
+            "main", "master", "origin/main", "origin/master"]
+    seen = []
+    for ref in refs:
+        if ref and ref not in seen:
+            seen.append(ref)
+    return seen
+
+
+def after_commit(root, spec):
+    """(spec, patch, skipped) against the first fallback ref HEAD has commits beyond, or None."""
+    if not spec["head"]:
+        return None
+    for ref in fallback_refs(root):
+        if not commit_of(root, ref):
+            continue
+        later = resolve(root, ref)
+        if later["sha"] == spec["head"]:
+            continue  # HEAD adds nothing to this ref
+        patch, skipped = take(root, later)
+        if patch.strip():
+            return later, patch, skipped
+    return None
 
 
 def sha256(data):
@@ -416,15 +458,47 @@ def index_entry(files, u):
 
 # --- collect -----------------------------------------------------------------------------
 
+RUN_NAME = re.compile(r"(\d{8}-\d{6})(?:-(\d+))?$")
+
+
+def private_dir(path):
+    """mkdir with mode 0700 — the snapshots hold source code."""
+    if not os.path.isdir(path):
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        try:
+            os.mkdir(path, 0o700)
+        except FileExistsError:  # a parallel collect made it first
+            pass
+
+
 def new_run_dir(out_root, repo):
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = os.path.join(out_root, re.sub(r"[^\w.-]+", "_", repo) or "repo", stamp)
+    private_dir(out_root)
+    if os.path.abspath(out_root) == OUT_ROOT:
+        os.chmod(out_root, 0o700)  # a cache dir made by an older version was 0755
+    repo_dir = os.path.join(out_root, re.sub(r"[^\w.-]+", "_", repo) or "repo")
+    private_dir(repo_dir)
+    base = os.path.join(repo_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     path, k = base, 1
-    while os.path.exists(path):
-        k += 1
-        path = f"{base}-{k}"
-    os.makedirs(path)
-    return path
+    while True:
+        try:
+            os.mkdir(path, 0o700)
+            return path
+        except FileExistsError:
+            k += 1
+            path = f"{base}-{k}"
+
+
+def prune(repo_dir, keep=KEEP_RUNS):
+    """Delete all but the newest `keep` run directories in repo_dir. Only directories that
+    collect made (a timestamp name and a hunks.json) are touched."""
+    runs = []
+    for name in os.listdir(repo_dir):
+        m = RUN_NAME.match(name)
+        if m and os.path.isfile(os.path.join(repo_dir, name, "hunks.json")):
+            runs.append(((m.group(1), int(m.group(2) or 1)), name))
+    runs.sort()
+    for _, name in runs[:max(len(runs) - keep, 0)]:
+        shutil.rmtree(os.path.join(repo_dir, name), ignore_errors=True)
 
 
 def base_label(spec):
@@ -442,6 +516,11 @@ def collect(arg, out_root):
     root = toplevel(os.getcwd())
     spec = resolve(root, arg)
     patch, skipped = take(root, spec)
+    fallback = None
+    if not patch.strip() and not arg:
+        fallback = after_commit(root, spec)
+        if fallback:
+            spec, patch, skipped = fallback
     if not patch.strip():
         print("No changes.")
         for path in skipped:
@@ -463,17 +542,22 @@ def collect(arg, out_root):
     index = [index_entry(files, u) for u in units]
     with open(os.path.join(run_dir, "hunks.json"), "w", encoding="utf-8") as fh:
         json.dump({"version": 1, "meta": meta, "units": index}, fh, ensure_ascii=False, indent=1)
+    prune(os.path.dirname(run_dir))
 
     noisy = [f for f in files if f["noise"]]
     plain_lines = sum(f["added"] + f["removed"] for f in files if not f["noise"])
     print(f"Run directory: {run_dir}")
     print(f"Base: {base_label(spec)}")
+    if fallback:
+        print(f"Nothing uncommitted — showing the commits HEAD has beyond {spec['ref']} instead.")
     line = (f"{len(files)} files, {len(units)} units, "
             f"+{sum(f['added'] for f in files)} -{sum(f['removed'] for f in files)}")
     if noisy:
         line += (f" (noise: {len(noisy)} files, +{sum(f['added'] for f in noisy)}"
                  f" -{sum(f['removed'] for f in noisy)})")
     print(line)
+    patch_lines = patch.count(b"\n")
+    print(f"patch.diff: {patch_lines} lines")
     for path in skipped:
         print(f"Skipped untracked nested repository: {path}")
     if plain_lines > BIG_DIFF:
@@ -704,7 +788,7 @@ LABELS = {
         "loose_line": "unexplained", "flags_line": "to check by eye",
         "inferred_line": "inferred from code, not from the conversation",
         "stale": "stale", "stale_line": "the working tree or HEAD changed after this snapshot",
-        "inferred": "inferred from code", "uncommitted": "uncommitted", "range": "commit range",
+        "inferred": "inferred from code", "uncommitted": "uncommitted", "range": "range",
         "branch": "branch since the base + uncommitted",
         "base_wt": "base {ref} → working tree + untracked",
         "base_mb": "merge-base of {ref} and HEAD ({sha})",
@@ -736,7 +820,7 @@ LABELS = {
         "inferred_line": "выведено из кода, а не из разговора",
         "stale": "снимок устарел", "stale_line": "рабочее дерево или HEAD изменились после снимка",
         "inferred": "выведено из кода", "uncommitted": "не закоммичено",
-        "range": "диапазон коммитов",
+        "range": "диапазон",
         "branch": "ветка от базы + не закоммичено",
         "base_wt": "база {ref} → рабочее дерево + untracked",
         "base_mb": "общий предок {ref} и HEAD ({sha})",
@@ -1320,7 +1404,8 @@ def render(meta, files, units, notes, drift, run_dir):
         foot.append(f'<span>{esc(L["skipped"].format(paths=", ".join(meta["skipped"])))}</span>')
     out.append(f'<footer class="foot">{"".join(foot)}</footer></div>')
     if page.highlight:
-        out.append(f'<script src="{HLJS}/highlight.min.js"></script>')
+        out.append(f'<script src="{HLJS}" integrity="{HLJS_SRI}" crossorigin="anonymous" '
+                   f'referrerpolicy="no-referrer"></script>')
     out.append(f"<script>{PAGE_JS}</script></body></html>")
     return "\n".join(out), page.loose
 
@@ -1399,8 +1484,9 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="difftour.py", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("collect", help="snapshot the diff and print the unit index")
-    c.add_argument("target", nargs="?", help="REF, or a range A..B / A...B")
-    c.add_argument("--out-root", default=OUT_ROOT, help=argparse.SUPPRESS)
+    c.add_argument("target", nargs="?", help="REF, or a range A..B (commits or trees) / A...B")
+    c.add_argument("--out-root", default=OUT_ROOT,
+                   help="where run directories go (default ~/.cache/kensei-diff)")
     b = sub.add_parser("build", help="check notes.json and render index.html")
     b.add_argument("run_dir")
     b.add_argument("--open", action="store_true", help="open the page in the system browser")

@@ -1,13 +1,13 @@
 {
-  "description": "ticket guard for subagents: in a session where /kensei-toolkit:ticket is active, subagents may not commit, push or write to the tracker. The sh prefix exits at once for main-session calls, unmarked sessions or a missing guard.py.",
+  "description": "ticket guard for subagents: in a session where /kensei-toolkit:ticket is active, subagents may not commit, push or write to the tracker. subagent-guard.sh exits at once for main-session calls, unmarked sessions or a missing guard.py, so Python starts only for subagent calls in a ticket session.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Monitor|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
+        "matcher": "Bash|Monitor|Agent|Write|Edit|NotebookEdit|Skill|SendMessage|mcp__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); case \"$input\" in *'\"agent_id\"'*) ;; *) exit 0 ;; esac; g=\"${CLAUDE_PLUGIN_ROOT}/skills/ticket/guard.py\"; [ -f \"$g\" ] || exit 0; s=$(printf '%s' \"$input\" | sed -n 's/.*\"session_id\"[[:space:]]*:[[:space:]]*\"\\([A-Za-z0-9_-]*\\)\".*/\\1/p' | head -n 1); [ -n \"$s\" ] && [ -f \"$HOME/.claude/task-runs/.guard/$s\" ] || exit 0; printf '%s' \"$input\" | python3 \"$g\" --subagent",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-guard.sh\"",
             "timeout": 15
           }
         ]

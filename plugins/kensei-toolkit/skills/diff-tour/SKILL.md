@@ -1,7 +1,6 @@
 ---
 name: diff-tour
-description: Annotated diff for self-review before a commit — renders the uncommitted changes (untracked files included) as a local HTML page in the system browser, file by file, side by side or unified, with notes on what each change does and why it was made in this conversation, and marks every change no note explains as "Unexplained". User-invoked only.
-disable-model-invocation: true
+description: Annotated diff for self-review before a commit — renders the changes (uncommitted work with untracked files, or a ref or range) as a local HTML page in the system browser, file by file, side by side or unified, with notes on what each change does and why it was made in this conversation, and marks every change no note explains as "Unexplained". Use when the user asks to see the changes — "show the diff", "what changed", "review before commit", "diff tour", «покажи дифф», «что поменялось», «дифф-тур», «ревью перед коммитом» — or when another skill or the user's CLAUDE.md says to show changes this way. Read-only — it never stages, commits or edits the repository. Run it when showing the changes is asked for, not on your own after every edit.
 argument-hint: "[ref | a..b]"
 ---
 
@@ -14,9 +13,11 @@ a stray edit, work from an earlier session.
 
 The page: a headline and a plain-language paragraph, summary panels (the script's own
 self-check first), a sticky bar with the file list and a side-by-side / unified switch, then one
-card per file with notes placed under the lines they explain.
+card per file with notes placed under the lines they explain. It is a local file; nothing is
+uploaded.
 
-**Design rationale:** `docs/brainstorms/2026-09-24-diff-tour-skill.md` in the user's home docs.
+Design rationale (the owner's notes, not shipped with the plugin):
+`~/docs/brainstorms/2026-09-24-diff-tour-skill.md`.
 
 ## Rules
 
@@ -31,6 +32,9 @@ card per file with notes placed under the lines they explain.
 3. **`source: "session"` only for a reason you can point to in this conversation** — the user
    asked for it, a bug was found, a decision was agreed. Everything else, and any doubt, is
    `"inferred"`. After a compaction, the summary counts only for what it states explicitly.
+   A file that a skill's procedure produced as a by-product (run notes, reports, copied
+   evidence) has no reason of that kind, even though a step told you to make it: mark it
+   `inferred` and say what produced it, so the user can decide whether it belongs in the commit.
 4. **Look at every unit before writing about it.** A hunk you remember writing can still carry a
    line you do not remember. When part of a hunk is unexplained, anchor a note with
    `kind: "stray"` under that line.
@@ -48,12 +52,20 @@ card per file with notes placed under the lines they explain.
    python3 "${CLAUDE_SKILL_DIR}/difftour.py" collect $ARGUMENTS
    ```
 
-   No argument: HEAD against the working tree, untracked included. A ref: the working tree
-   against the point where HEAD's history meets that ref (the merge-base) — `main` gives the
-   branch's own work plus uncommitted changes, not main's newer commits reversed. `a..b`: that
-   range only, no working tree — its reasons are mostly `inferred`, which is honest.
+   - No argument: HEAD against the working tree, untracked included. When nothing is
+     uncommitted (the work was just committed), collect compares HEAD with its upstream
+     instead — the commits not pushed yet — or, when the upstream has them all or there is
+     none, with the default branch (`origin/HEAD`, `main`, `master`): the branch's own work.
+     It then prints `Nothing uncommitted — showing the commits HEAD has beyond <ref> instead.`
+   - A ref: the working tree against the point where HEAD's history meets that ref (the
+     merge-base) — `main` gives the branch's own work plus uncommitted changes, not main's
+     newer commits reversed.
+   - `a..b`: that range only, no working tree. Either side may be a commit or a tree id (a
+     `git write-tree` result). `a...b` starts from the merge-base of two commits. A range's
+     reasons are mostly `inferred` unless the work was done in this conversation.
 
-   It prints the run directory, the base, the totals, then one line per unit:
+   It prints the run directory, the base, the totals, the length of patch.diff, then one line
+   per unit:
    `id  status  path  @@ header [facts]  +added -removed  L<line in patch.diff>`.
    `hN` is one hunk, or a whole file that has no hunks (binary, pure rename, mode change).
    `nN` is a whole file matching a noise pattern: lock files, minified, source maps, and the
@@ -61,44 +73,47 @@ card per file with notes placed under the lines they explain.
    `/` it matches a name at any depth, with `/` (or a leading `/`) from the repository root, a
    leading `**/` lets it start in any directory, a trailing `/` means a directory and everything
    under it. Noise units need a note too: a lock file that changed for no reason is worth seeing.
-   - `No changes.` → tell the user and stop.
+   - `No changes.` → nothing uncommitted and no commits beyond the upstream or default branch
+     (or the given ref/range is empty). Tell the user and stop.
    - Exit 2 → show the error and stop.
-   - A `WARNING` about size → mention it; continue unless the user narrows the ref.
+   - A size `WARNING` → mention it to the user and carry on with the tour. Collect again with a
+     narrower ref only if the user asks for one.
 
-2. **Read the units.** Read `<run dir>/patch.diff` — whole if it fits, otherwise by the `L`
-   offsets. Recall from this conversation why each change was made.
+2. **Read the units.** Read `<run dir>/patch.diff` in one pass when collect reports up to
+   2000 lines; otherwise read it in pieces by the `L` offsets, so that every unit is read once.
+   Recall from this conversation why each change was made.
 
-3. **Write `<run dir>/notes.json`:**
+3. **Write `<run dir>/notes.json`.** An example for a Russian-speaking user:
 
    ```json
    {
      "lang": "ru",
-     "title": "The mob no longer aggroes on a ship inside the station safe zone",
-     "lede": "What was wrong and what the fix does, 2–4 plain sentences, `code` allowed.",
+     "title": "Моб больше не агрится на корабль в безопасной зоне станции",
+     "lede": "Что было не так и что делает фикс — 2–4 простых предложения, можно `code`.",
      "link": { "url": "https://app.clickup.com/t/…", "label": "ClickUp 869f6uw9t" },
      "panels": [
-       { "title": "What changed", "text": "1 game code file, 2 test files: …" },
-       { "title": "Checks", "checks": [
-         { "pill": "6/6", "text": "new tests green; 4 were red before the fix" },
-         { "pill": "not done", "text": "commit, push", "warn": true } ] }
+       { "title": "Что изменилось", "text": "1 файл игрового кода, 2 файла тестов: …" },
+       { "title": "Проверки", "checks": [
+         { "pill": "6/6", "text": "новые тесты зелёные; до фикса 4 были красными" },
+         { "pill": "не сделано", "text": "коммит, пуш", "warn": true } ] }
      ],
      "files": [
-       { "path": "src/Npc/ServerNpcAiSystem.cs", "role": "game code", "kind": "prod" },
-       { "path": "tests/NpcSafeZoneAggroTests.cs", "role": "new tests", "kind": "test" }
+       { "path": "src/Npc/ServerNpcAiSystem.cs", "role": "игровой код", "kind": "prod" },
+       { "path": "tests/NpcSafeZoneAggroTests.cs", "role": "новые тесты", "kind": "test" }
      ],
      "notes": [
        { "unit": "h3", "after": "if (!sp.InSafeZone && d < minDist)", "source": "session",
-         "text": "**The fix itself.** A ship in the zone cannot become the nearest one …" },
+         "text": "**Сам фикс.** Корабль в зоне больше не может стать ближайшим …" },
        { "unit": "h2", "source": "session",
-         "text": "**This block is moved, not deleted** — it now follows the stations." },
+         "text": "**Блок перенесён, а не удалён** — теперь он идёт после станций." },
        { "unit": "h5", "after": "Debug.Log", "side": "new", "kind": "stray", "source": "session",
-         "text": "Left over from debugging the aggro loop — remove before the commit." }
+         "text": "Остался после отладки цикла агро — убрать до коммита." }
      ],
-     "unexplained": { "h7": "adds Debug.Log to Update" }
+     "unexplained": { "h7": "добавляет Debug.Log в Update" }
    }
    ```
 
-   - `lang` — the session's language; it picks the page labels (`ru`, otherwise English).
+   - `lang` — the user's language; it picks the page labels (`ru`, otherwise English).
      Write every text field in that language.
    - `title` — the change in terms of behaviour, one sentence. `lede` — the problem and the fix
      for someone who has not read the code.
@@ -136,7 +151,28 @@ card per file with notes placed under the lines they explain.
    `--open` shows the page in the system browser. Never open it with a bare `open`: terminals
    such as cmux shadow `open` on PATH and put the page in a side pane instead.
 
-5. **Report** in the session's language: the page path, the counts line, and the Unexplained
-   list as build printed it. If build printed the drift `WARNING`, say it first — the page no
-   longer matches what a commit would contain. Then stop. No follow-up action unless the user
-   asks for one.
+5. **Report** in the user's language: the page path, the base when collect fell back to one,
+   the counts line, and the Unexplained list as build printed it. If build printed the drift
+   `WARNING`, say it first — the page no longer matches what a commit would contain. Then
+   stop. No follow-up action unless the user asks for one.
+
+## When another skill calls it
+
+A skill that has its own snapshot to show (for example ticket's publish gate: "run the
+diff-tour against `<reviewed_tree>` vs `<base_sha>` and give the page path") runs the same
+steps with these differences:
+
+- Collect the exact range: `collect <base_sha>..<reviewed_tree>`. A tree id is accepted on
+  either side, so the page shows the reviewed snapshot even if the working tree moved on.
+- The calling skill's agreed criteria, test runs and review findings in this conversation
+  are reasons you can point to, so notes built on them are `session`; the rules above still
+  apply unchanged.
+- Add `--open` only when someone is at the screen. Without it, build just writes the page.
+  `--out-root <dir>` puts the run directory under `<dir>/<repo>/` instead of
+  `~/.cache/kensei-diff` — use a directory outside the work tree or a git-ignored one, so the
+  tour never shows up as untracked files in the next diff.
+- Hand back the `Page:` path and the counts line from build's output instead of the full
+  report; the caller decides what to show.
+
+Run directories are private to the user (mode 0700); collect keeps the newest 20 per
+repository and deletes older ones.

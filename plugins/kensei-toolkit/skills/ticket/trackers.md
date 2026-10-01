@@ -12,7 +12,7 @@ the report says why it could not.
 
 ## Channel 3 — Offer to install an MCP server
 
-**Never install one yourself.** An MCP server is a persistent connection that usually holds an
+**You install none yourself.** An MCP server is a persistent connection that usually holds an
 API token; adding it is the user's decision, not a step in a task run.
 
 What to do: name the server, show the exact command, say what it will ask for, and ask once. If
@@ -22,7 +22,7 @@ rather than waiting.
 Most trackers now publish a hosted server, added like this:
 
 ```bash
-claude mcp add --transport sse <name> <url>          # hosted, OAuth in the browser
+claude mcp add --transport http <name> <url>         # hosted, OAuth in the browser
 claude mcp add <name> -- npx -y <package>            # local, needs a token in env
 ```
 
@@ -68,7 +68,7 @@ ordered a comment and approved its text (see below).
 4. Status vocabulary is generally **not** reliably readable this way. Default to
    `status_vocabulary: unavailable` unless the status control plainly enumerates its options.
 
-### Constraints, and why they are not negotiable
+### Constraints, and why they hold
 
 - **The extension needs site permission for this host.** If a call fails on permissions, tell
   the user which host to allow — do not retry the same call hoping it passes.
@@ -86,7 +86,7 @@ outward-facing action performed by clicking through a page you cannot fully veri
 Rules:
 
 1. **Only an ordered, approved comment.** Post nothing the user has not ordered and then approved
-   word for word under "Task comments" in `SKILL.md` — drafted, fact-checked by a fresh agent,
+   word for word under "Task comments" in `publish.md` — drafted, fact-checked by a fresh agent,
    shown in full. Type exactly that text; do not "tidy" it in the editor.
 2. Only ever post a **comment**. Never change status, assignee, or any other field through the
    browser. Status changes go through MCP or CLI, or not at all.
@@ -107,7 +107,7 @@ Record `tracker_channel: manual`. Consequences, all of which go into the final r
 
 - `status_vocabulary: unavailable` — the status cannot be changed by this run, even on command.
 - The report is always written to `<run_dir>/REPORT.md`. A comment the user orders is still
-  drafted and fact-checked under "Task comments" in `SKILL.md`; the approved text is printed in
+  drafted and fact-checked under "Task comments" in `publish.md`; the approved text is printed in
   full for the user to paste into the tracker themselves.
 - Criteria marked `[from ticket]` mean "from the pasted text". Everything else is `[added]`, and
   the Step 5 confirmation carries more weight than usual — it is the only place the user can

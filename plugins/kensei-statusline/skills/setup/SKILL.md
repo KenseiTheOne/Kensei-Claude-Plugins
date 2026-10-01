@@ -1,69 +1,59 @@
 ---
 name: setup
-description: Configure the kensei-statusline in your Claude Code settings
-trigger: Use when the user wants to set up, reconfigure, or reinstall the statusline plugin
+description: Configure the kensei-statusline as the Claude Code statusline — writes a small wrapper script and sets statusLine in the user settings.json. Use when the user wants to set up, reconfigure, repair or reinstall the statusline plugin, or agrees to the setup offered at session start.
 ---
 
 # Statusline Setup
 
-Configure the kensei-statusline plugin as the active Claude Code statusline.
+Make the kensei-statusline the active Claude Code statusline. `setup.py` next to this file does the
+work, so the result does not depend on retyping anything by hand. It:
 
-## Step 1 — Create wrapper script
+- copies the wrapper `scripts/kensei-statusline-wrapper.py` to `<config dir>/scripts/kensei-statusline.py`.
+  On every render the wrapper runs the installed plugin version, read from
+  `plugins/installed_plugins.json`, and skips orphaned cache copies;
+- sets `statusLine.type` and `statusLine.command` in `<config dir>/settings.json`, keeping every other
+  field, including `refreshInterval`, `padding` and the rest of the user's `statusLine`;
+- saves a backup `settings.json.bak-<timestamp>` before changing `settings.json`;
+- removes the "don't offer setup" marker `<config dir>/.statusline-no-setup`.
 
-Create the directory `~/.claude/scripts/` if it doesn't exist.
+`<config dir>` is `$CLAUDE_CONFIG_DIR`, or `~/.claude` when it is unset. Talk to the user in their
+language.
 
-Write this wrapper to `~/.claude/scripts/kensei-statusline.py`:
+## Step 1 — Preview and tell the user what will change
 
-```python
-#!/usr/bin/env python3
-"""Kensei Statusline wrapper — resolves plugin cache version dynamically."""
-from __future__ import annotations
-
-import os
-import sys
-import runpy
-
-CACHE = os.path.join(
-    os.path.expanduser("~"), ".claude", "plugins", "cache",
-    "kensei-claude-plugins", "kensei-statusline",
-)
-
-def version_key(name: str) -> tuple:
-    # 1.10.0 must beat 1.4.0 — a plain string sort would not
-    return tuple(int(p) if p.isdigit() else -1 for p in name.split("."))
-
-
-if os.path.isdir(CACHE):
-    versions = sorted(os.listdir(CACHE), key=version_key)
-    if versions:
-        script = os.path.join(CACHE, versions[-1], "scripts", "statusline.py")
-        if os.path.isfile(script):
-            runpy.run_path(script, run_name="__main__")
-            sys.exit(0)
-
-print("...")
+```bash
+python3 "${CLAUDE_SKILL_DIR}/setup.py" --dry-run
 ```
 
-## Step 2 — Update settings.json
+The output is JSON. Tell the user in two or three short lines:
 
-Read `~/.claude/settings.json`. Determine the absolute path to the wrapper using the user's home directory (e.g., `C:/Users/Username/.claude/scripts/kensei-statusline.py` on Windows, `/home/username/.claude/scripts/kensei-statusline.py` on Linux/macOS).
+- which settings file and wrapper path will be written. Say so when `wrapper_replaced` is true: an
+  existing wrapper is overwritten, because older wrappers picked the plugin version by string order
+  and could run a stale or orphaned copy;
+- what `statusLine` changes from (`old_status_line`) and to (`new_status_line`), and that other
+  fields stay as they are and a backup is made first;
+- that the statusline reads Claude Code's own OAuth token (macOS keychain or `.credentials.json`)
+  to fetch subscription usage meters from `api.anthropic.com` every few minutes at most, and that
+  `KENSEI_STATUSLINE_NO_USAGE_FETCH=1` turns this off.
 
-Add or replace the `statusLine` key:
+If `local_override_status_line` is not null, `settings.local.json` defines its own `statusLine`,
+which takes precedence over `settings.json`. Setup leaves that file alone, so tell the user the old
+statusline keeps showing until they remove `statusLine` from `local_settings`.
 
-```json
-"statusLine": {
-  "type": "command",
-  "command": "python3 \"<absolute-path-to-wrapper>\""
-}
+If `old_status_line` runs a different statusline (its command does not mention
+`kensei-statusline`), ask with AskUserQuestion whether to replace it, since this removes the user's
+current statusline. Otherwise go on.
+
+If the output has `error` (for example settings.json is not valid JSON), show it and stop. Fixing
+the user's settings file is their call.
+
+## Step 2 — Apply
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/setup.py"
 ```
-
-Use the Edit tool to modify the file. If `statusLine` already exists, replace it.
-
-Also remove the dismiss marker `~/.claude/.statusline-no-setup` if it exists (user is explicitly re-running setup).
-
-If `~/.claude/scripts/kensei-statusline.py` already exists from an earlier install, overwrite it:
-older wrappers picked the plugin version by string order and would run 1.4.0 instead of 1.10.0.
 
 ## Step 3 — Confirm
 
-Tell the user the statusline is configured. They need to restart Claude Code (`/exit` and start a new session) for it to take effect.
+Tell the user the statusline is configured, name the backup file if one was made, and say that it
+appears after a restart of Claude Code (`/exit` and start a new session).

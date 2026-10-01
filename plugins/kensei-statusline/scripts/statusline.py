@@ -18,20 +18,73 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
-# Anthropic API pricing (USD per 1M tokens), May 2025
-PRICING = {
-    "opus":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.875},
-    "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.375},
-    "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.10},
+# Anthropic first-party API pricing, USD per 1M tokens: (input, output, cache read), as of
+# 2026-09. Cache writes are priced from input: 1.25x for the 5-minute TTL, 2x for the 1-hour TTL.
+# Used only when Claude Code does not report cost.total_cost_usd itself. A model missing here is
+# priced as unknown ("n/a") rather than guessed from its family: prices change between versions
+# (Opus 5.5 is cheaper than Opus 5, Fable 5.1 cache reads are a quarter of Fable 5's).
+PRICES = {
+    "claude-fable-5-1":  (10.0, 50.0, 0.25),
+    "claude-fable-5":    (10.0, 50.0, 1.00),
+    "claude-opus-5-5":   (4.0, 20.0, 0.20),
+    "claude-opus-5":     (5.0, 25.0, 0.50),
+    "claude-opus-4-8":   (5.0, 25.0, 0.50),
+    "claude-opus-4-7":   (5.0, 25.0, 0.50),
+    "claude-opus-4-6":   (5.0, 25.0, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.20),
+    "claude-sonnet-5":   (2.0, 10.0, 0.20),
+    "claude-sonnet-4-6": (3.0, 15.0, 0.30),
+    "claude-haiku-4-5":  (1.0, 5.0, 0.10),
 }
+TOKEN_KEYS = ("input", "output", "cache_write", "cache_write_1h", "cache_read")
 
 
-def get_pricing(model_id: str) -> dict:
-    mid = model_id.lower()
-    for key in PRICING:
-        if key in mid:
-            return PRICING[key]
-    return PRICING["sonnet"]
+def normalize_model_id(model_id: str) -> str:
+    """'us.anthropic.claude-haiku-4-5-20251001-v1:0' / 'claude-opus-5-5[1m]' / a Bedrock ARN
+    ('arn:aws:bedrock:…:inference-profile/us-gov.anthropic.claude-…') -> the bare id."""
+    mid = model_id.lower().strip()
+    mid = re.sub(r"\[[^\]]*\]$", "", mid)          # context-size tag: [1m]
+    # Bedrock: an ARN's resource path, then a region prefix (us., eu., apac., us-gov., global.)
+    mid = re.sub(r"^(?:.*/)?(?:[a-z-]+\.)?anthropic\.", "", mid)
+    mid = re.sub(r"-v\d+(?::\d+)?$", "", mid)        # Bedrock version suffix
+    mid = re.sub(r"[-@]\d{8}$", "", mid)             # dated snapshot (Vertex uses @)
+    return mid
+
+
+def get_pricing(model_id: str) -> dict | None:
+    """Per-1M-token rates for one model id, or None when the price is not known."""
+    row = PRICES.get(normalize_model_id(model_id))
+    if not row:
+        return None
+    inp, out, read = row
+    return {"input": inp, "output": out, "cache_write": inp * 1.25,
+            "cache_write_1h": inp * 2.0, "cache_read": read}
+
+
+def empty_tokens() -> dict:
+    return {k: 0 for k in TOKEN_KEYS}
+
+
+def add_usage(models: dict[str, dict], msg: dict) -> dict | None:
+    """Add one assistant message's usage to the per-model totals; returns the usage it added."""
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    model = msg.get("model") or "unknown"
+    if usage.get("speed") == "fast":
+        # Fast mode is billed at its own, higher rates that the table does not hold; a separate
+        # key has no price, so these tokens show as n/a instead of at standard rates.
+        model += " (fast)"
+    m = models.setdefault(model, empty_tokens())
+    write_total = usage.get("cache_creation_input_tokens") or 0
+    split = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    write_1h = min(split.get("ephemeral_1h_input_tokens") or 0, write_total)
+    m["input"] += usage.get("input_tokens") or 0
+    m["output"] += usage.get("output_tokens") or 0
+    m["cache_write"] += write_total - write_1h
+    m["cache_write_1h"] += write_1h
+    m["cache_read"] += usage.get("cache_read_input_tokens") or 0
+    return usage
 
 
 def fmt_tokens(n: int) -> str:
@@ -224,6 +277,7 @@ def refresh_usage() -> None:
         except (OSError, NameError):
             pass
         finally:
+            timer.cancel()  # in-process callers (the tests) outlive the deadline
             try:
                 os.unlink(lock)
             except OSError:
@@ -350,20 +404,8 @@ def parse_transcript(filepath: str) -> dict[str, dict]:
                     entry = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if entry.get("type") != "assistant":
-                    continue
-                msg = entry.get("message") or {}
-                usage = msg.get("usage")
-                if not usage:
-                    continue
-                model = msg.get("model") or "unknown"
-                if model not in models:
-                    models[model] = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
-                m = models[model]
-                m["input"] += usage.get("input_tokens") or 0
-                m["output"] += usage.get("output_tokens") or 0
-                m["cache_write"] += usage.get("cache_creation_input_tokens") or 0
-                m["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                if isinstance(entry, dict) and entry.get("type") == "assistant":
+                    add_usage(models, entry.get("message") or {})
     except OSError:
         pass
     return models
@@ -408,22 +450,11 @@ def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str], in
 
                 if entry_type == "assistant":
                     msg = entry.get("message") or {}
-                    # Token usage
-                    usage = msg.get("usage")
+                    usage = add_usage(models, msg)
                     if usage:
-                        model = msg.get("model") or "unknown"
-                        if model not in models:
-                            models[model] = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
-                        m = models[model]
-                        inp = usage.get("input_tokens") or 0
-                        out = usage.get("output_tokens") or 0
-                        cw = usage.get("cache_creation_input_tokens") or 0
-                        cr = usage.get("cache_read_input_tokens") or 0
-                        m["input"] += inp
-                        m["output"] += out
-                        m["cache_write"] += cw
-                        m["cache_read"] += cr
-                        last_input_total = inp + cw + cr
+                        last_input_total = ((usage.get("input_tokens") or 0)
+                                            + (usage.get("cache_creation_input_tokens") or 0)
+                                            + (usage.get("cache_read_input_tokens") or 0))
                     # Agent tool_use detection
                     for block in msg.get("content", []):
                         if block.get("type") == "tool_use" and block.get("name") == "Agent":
@@ -459,53 +490,60 @@ def parse_main_transcript(filepath: str) -> tuple[dict[str, dict], list[str], in
     return models, active, last_input_total
 
 
-def get_subagent_tokens(transcript_path: str) -> dict[str, dict]:
-    """Sum token usage from all subagent transcripts.
-    Returns { model_id: { input, output, cache_write, cache_read } }."""
+def subagent_transcripts(transcript_path: str) -> list[str]:
+    """Every subagent transcript of a session, at any depth: Agent-tool subagents sit directly in
+    <session>/subagents/, workflow subagents one level further, in subagents/workflows/<run>/."""
     base = transcript_path.rsplit(".", 1)[0]  # strip .jsonl
     subagent_dir = os.path.join(base, "subagents")
-
     if not os.path.isdir(subagent_dir):
-        return {}
+        return []
+    return sorted(p for p in glob_mod.glob(os.path.join(subagent_dir, "**", "agent-*.jsonl"),
+                                           recursive=True)
+                  if "acompact" not in os.path.basename(p))
 
+
+def get_subagent_tokens(transcript_path: str) -> dict[str, dict]:
+    """Sum token usage from all subagent transcripts. Returns { model_id: {TOKEN_KEYS...} }."""
     all_models: dict[str, dict] = {}
-
-    for jsonl_path in glob_mod.glob(os.path.join(subagent_dir, "agent-*.jsonl")):
-        if "acompact" in os.path.basename(jsonl_path):
-            continue
-        agent_models = parse_transcript(jsonl_path)
-        for model_id, tokens in agent_models.items():
-            if model_id not in all_models:
-                all_models[model_id] = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
-            m = all_models[model_id]
-            for k in ("input", "output", "cache_write", "cache_read"):
-                m[k] += tokens[k]
-
+    for jsonl_path in subagent_transcripts(transcript_path):
+        all_models = merge_models(all_models, parse_transcript(jsonl_path))
     return all_models
 
 
-def calc_cost_from_models(models: dict[str, dict]) -> float:
-    """Calculate cost from per-model token dicts with cache breakdowns."""
-    cost = 0.0
+def calc_cost_from_models(models: dict[str, dict]) -> tuple[float, bool]:
+    """(cost of the models with a known price, whether some tokens went to a model without one).
+    A model with no tokens at all (Claude Code's '<synthetic>' messages) counts as neither."""
+    cost, unknown = 0.0, False
     for model_id, tokens in models.items():
+        if not any(tokens.get(k) for k in TOKEN_KEYS):
+            continue
         p = get_pricing(model_id)
-        cost += (
-            tokens["input"] * p["input"]
-            + tokens["cache_write"] * p["cache_write"]
-            + tokens["cache_read"] * p["cache_read"]
-            + tokens["output"] * p["output"]
-        ) / 1_000_000
-    return cost
+        if p is None:
+            unknown = True
+            continue
+        cost += sum(tokens.get(k, 0) * p[k] for k in TOKEN_KEYS) / 1_000_000
+    return cost, unknown
 
 
 def merge_models(a: dict[str, dict], b: dict[str, dict]) -> dict[str, dict]:
     """Merge two model token dicts."""
-    result = {}
-    for model_id in set(list(a.keys()) + list(b.keys())):
-        result[model_id] = {}
-        for k in ("input", "output", "cache_write", "cache_read"):
-            result[model_id][k] = a.get(model_id, {}).get(k, 0) + b.get(model_id, {}).get(k, 0)
-    return result
+    return {model_id: {k: a.get(model_id, {}).get(k, 0) + b.get(model_id, {}).get(k, 0)
+                       for k in TOKEN_KEYS}
+            for model_id in set(a) | set(b)}
+
+
+def fmt_cost(data: dict, models: dict[str, dict]) -> str:
+    """Claude Code's own cost when it reports one, else '~$X' estimated from the transcripts;
+    'n/a' marks tokens spent on a model whose price this script does not know."""
+    reported = (data.get("cost") or {}).get("total_cost_usd")
+    if isinstance(reported, (int, float)) and reported > 0:
+        cost, prefix, unknown = float(reported), "", False
+    else:
+        (cost, unknown), prefix = calc_cost_from_models(models), "~"
+        if unknown and not cost:
+            return "\033[2m$n/a\033[0m"
+    text = f"{prefix}${cost:.2f}" if cost < 10 else f"{prefix}${cost:.1f}"
+    return text + (" \033[2m+ n/a\033[0m" if unknown else "")
 
 
 def fmt_lines_changed(data: dict) -> str | None:
@@ -518,29 +556,65 @@ def fmt_lines_changed(data: dict) -> str | None:
     return f"\033[32m+{added}\033[0m \033[31m-{removed}\033[0m"
 
 
-def get_project_stats(cwd: str) -> str | None:
-    """Get project file count and lines of code."""
+PROJECT_STATS_CACHE = os.path.join(CONFIG_DIR, "cache", "kensei-statusline", "project-stats.json")
+PROJECT_STATS_KEEP = 64     # commits remembered; the oldest go first
+
+
+def git(cwd: str, *args: str, timeout: float = 2, stdin: str | None = None):
+    """Run git without taking optional locks: a statusline refresh must never hold index.lock
+    while the user (or Claude) runs git in the same repository."""
+    return subprocess.run(["git", "--no-optional-locks", *args], capture_output=True, text=True,
+                          timeout=timeout, cwd=cwd, input=stdin)
+
+
+def count_project(cwd: str) -> tuple[int, int] | None:
+    """(files, lines) tracked at HEAD — a diff of HEAD against the empty tree."""
+    empty = git(cwd, "hash-object", "-t", "tree", "--stdin", stdin="")
+    if empty.returncode != 0:
+        return None
+    stat = git(cwd, "diff", "--shortstat", empty.stdout.strip(), "HEAD", timeout=3)
+    if stat.returncode != 0 or not stat.stdout.strip():
+        return None
+    line = stat.stdout.strip()
+    files_m = re.search(r"(\d+) file", line)
+    ins_m = re.search(r"(\d+) insertion", line)
+    return (int(files_m.group(1)) if files_m else 0, int(ins_m.group(1)) if ins_m else 0)
+
+
+def get_project_stats(cwd: str, head: str | None = None) -> str | None:
+    """Get project file count and lines of code. The count depends only on the HEAD commit, so it
+    is cached by its sha: the diff against the empty tree is most of a render's time."""
     try:
-        empty = subprocess.run(
-            ["git", "hash-object", "-t", "tree", "--stdin"],
-            capture_output=True, text=True, timeout=2, cwd=cwd, input="",
-        )
-        if empty.returncode != 0:
-            return None
-        empty_tree = empty.stdout.strip()
-
-        stat = subprocess.run(
-            ["git", "diff", "--shortstat", empty_tree, "HEAD"],
-            capture_output=True, text=True, timeout=3, cwd=cwd,
-        )
-        if stat.returncode != 0 or not stat.stdout.strip():
-            return None
-
-        line = stat.stdout.strip()
-        files_m = re.search(r"(\d+) file", line)
-        ins_m = re.search(r"(\d+) insertion", line)
-        files = int(files_m.group(1)) if files_m else 0
-        loc = int(ins_m.group(1)) if ins_m else 0
+        cache: dict = {}
+        if head:
+            try:
+                with open(PROJECT_STATS_CACHE, encoding="utf-8") as f:
+                    cache = json.load(f)
+            except (OSError, ValueError):
+                cache = {}
+            if not isinstance(cache, dict):
+                cache = {}
+        hit = cache.get(head) if head else None
+        if isinstance(hit, list) and len(hit) == 2 and all(isinstance(n, int) for n in hit):
+            files, loc = hit
+        else:
+            counted = count_project(cwd)
+            if counted is None:
+                return None
+            files, loc = counted
+            if head:
+                cache.pop(head, None)
+                cache[head] = [files, loc]
+                for old in list(cache)[:-PROJECT_STATS_KEEP]:
+                    del cache[old]
+                try:
+                    os.makedirs(os.path.dirname(PROJECT_STATS_CACHE), exist_ok=True)
+                    tmp = f"{PROJECT_STATS_CACHE}.{os.getpid()}.tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(cache, f)
+                    os.replace(tmp, PROJECT_STATS_CACHE)
+                except OSError:
+                    pass  # no cache this time; the count itself is still right
 
         if loc:
             return f"{files} files {fmt_tokens(loc)} loc"
@@ -549,23 +623,25 @@ def get_project_stats(cwd: str) -> str | None:
         return None
 
 
-def get_git_info(cwd: str) -> str | None:
-    """Get git branch, file changes, and ahead/behind from cwd."""
+def get_git_info(cwd: str) -> tuple[str | None, str | None]:
+    """Get git branch, file changes, and ahead/behind from cwd; also the HEAD sha (None before
+    the first commit), which keys the project-stats cache."""
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain=v2", "--branch"],
-            capture_output=True, text=True, timeout=2, cwd=cwd,
-        )
+        result = git(cwd, "status", "--porcelain=v2", "--branch")
         if result.returncode != 0:
-            return None
+            return None, None
 
         branch = ""
+        head = None
         ahead = behind = 0
         staged = modified = untracked = 0
 
         for line in result.stdout.splitlines():
             if line.startswith("# branch.head "):
                 branch = line.split(" ", 2)[2]
+            elif line.startswith("# branch.oid "):
+                oid = line.split(" ", 2)[2].strip()
+                head = oid if re.fullmatch(r"[0-9a-f]{40,64}", oid) else None
             elif line.startswith("# branch.ab "):
                 parts = line.split()
                 ahead = int(parts[2].lstrip("+"))
@@ -580,7 +656,7 @@ def get_git_info(cwd: str) -> str | None:
                 untracked += 1
 
         if not branch:
-            return None
+            return None, None
 
         dim = "\033[2m"
         rst = "\033[0m"
@@ -607,10 +683,10 @@ def get_git_info(cwd: str) -> str | None:
         if sync:
             parts.append("".join(sync))
 
-        return f" {dim}\u2502{rst} ".join(parts)
+        return f" {dim}\u2502{rst} ".join(parts), head
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+        return None, None
 
 
 def main():
@@ -635,17 +711,7 @@ def main():
     all_models = merge_models(main_models, sub_models)
 
     total_out = sum(m["output"] for m in all_models.values())
-
-    # Cost: prefer Claude Code's reported cost, fall back to our calculation
-    reported_cost = (data.get("cost") or {}).get("total_cost_usd")
-    has_reported_cost = reported_cost and reported_cost > 0
-    if has_reported_cost:
-        cost = reported_cost
-    else:
-        cost = calc_cost_from_models(all_models)
-
-    cost_prefix = "" if has_reported_cost else "~"
-    cost_str = f"{cost_prefix}${cost:.2f}" if cost < 10 else f"{cost_prefix}${cost:.1f}"
+    cost_str = fmt_cost(data, all_models)
 
     bar = colorize_bar(make_bar(pct), pct)
     dim = "\033[2m"
@@ -681,12 +747,12 @@ def main():
     # Line 3: git info + lines changed + project stats
     cwd = data.get("cwd") or data.get("workspace", {}).get("current_dir", "")
     if cwd:
-        git_line = get_git_info(cwd)
+        git_line, head = get_git_info(cwd)
         if git_line:
             lines = fmt_lines_changed(data)
             if lines:
                 git_line += f" {dim}\u2502{rst} {lines}"
-            proj_stats = get_project_stats(cwd)
+            proj_stats = get_project_stats(cwd, head)
             if proj_stats:
                 git_line += f" {dim}\u2502{rst} \033[2m{proj_stats}{rst}"
             print(git_line)

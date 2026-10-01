@@ -1,0 +1,8 @@
+# eval outputs
+results/
+*result*.json
+report.html
+# session transcripts left by eval runs (UUID-named)
+[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*-*-*-*.jsonl
+# generated per clone by make_history.py
+ticket-commit-at-gate/history.jsonl

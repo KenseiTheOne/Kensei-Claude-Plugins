@@ -219,11 +219,34 @@ class CollectRegressions(unittest.TestCase):
         later = os.path.getmtime(os.path.join(path, "b.txt")) + 5
         os.utime(os.path.join(path, "b.txt"), (later, later))  # stat-dirty, same content
         index_file = os.path.join(path, ".git", "index")
-        before = open(index_file, "rb").read()
+        with open(index_file, "rb") as fh:
+            before = fh.read()
         run_dir, _ = collect(path)
         code, _, err = build(run_dir, {"title": "t", "lede": "l", "notes": []})
         self.assertEqual(code, 0, err)
-        self.assertEqual(open(index_file, "rb").read(), before)
+        with open(index_file, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_same_second_same_size_edit_is_not_lost(self):
+        # Racy git: the index and the edited file share one mtime, and the edit keeps the size,
+        # so only the index's own mtime tells git to look at the content. A copy of the index
+        # with a fresh mtime made git trust the stale stat and drop a.txt from the diff.
+        path = repo()
+        git(path, "config", "core.trustctime", "false")
+        a, then = os.path.join(path, "a.txt"), 1_700_000_000
+        write(path, "a.txt", "1\n")
+        os.utime(a, (then, then))
+        git(path, "add", "a.txt")
+        git(path, "commit", "-qm", "init")
+        write(path, "a.txt", "2\n")
+        os.utime(a, (then, then))
+        os.utime(os.path.join(path, ".git", "index"), (then, then))
+        write(path, "u.txt", "u\n")                         # takes the throwaway-index path
+        run_dir, _ = collect(path)
+        self.assertEqual(set(by_path(run_dir)), {"a.txt", "u.txt"})
+        code, out, _ = build(run_dir, notes_with())         # check_drift takes the same path
+        self.assertEqual(code, 0)
+        self.assertNotIn("WARNING", out)
 
     def test_submodule_change_survives_diff_submodule_log(self):
         src = repo({"a.txt": "a\n"})
@@ -286,10 +309,114 @@ class CollectRegressions(unittest.TestCase):
         build(run_dir, notes_with())
         self.assertIn("branch since the base + uncommitted", page(run_dir))
 
+    def test_tree_range_for_a_caller(self):
+        # What ticket's publish gate passes: the base commit .. the reviewed tree id.
+        path = repo({"a.txt": "1\n"})
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True,
+                              text=True).stdout.strip()
+        write(path, "a.txt", "2\n")
+        write(path, "n.txt", "n\n")
+        git(path, "add", "-A")
+        tree = subprocess.run(["git", "write-tree"], cwd=path, capture_output=True,
+                              text=True).stdout.strip()
+        write(path, "a.txt", "3\n")                         # later edits stay out of it
+        run_dir, out = collect(path, f"{base}..{tree}")
+        self.assertIn(f"Base: {base}..{tree}", out)
+        self.assertEqual(set(by_path(run_dir)), {"a.txt", "n.txt"})
+        _, files, _ = difftour.load_snapshot(run_dir)
+        self.assertIn(["+", "2"], files[0]["hunks"][0]["lines"])
+        code, out, err = build(run_dir, notes_with())
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("WARNING", out)
+
     def test_head_base_is_uncommitted(self):
         run_dir, _ = collect(three_changes())
         build(run_dir, notes_with())
         self.assertIn("· uncommitted</span>", page(run_dir))
+
+
+def feature_branch():
+    """main with one commit, feature with two commits on top of it, nothing uncommitted."""
+    path = repo({"a.txt": "a\n"})
+    git(path, "checkout", "-q", "-b", "feature")
+    for name in ("f1.txt", "f2.txt"):
+        write(path, name, name + "\n")
+        git(path, "add", name)
+        git(path, "commit", "-qm", name)
+    return path
+
+
+class AfterCommit(unittest.TestCase):
+
+    def test_falls_back_to_the_default_branch(self):
+        run_dir, out = collect(feature_branch())
+        self.assertIn("Base: main (", out)
+        self.assertIn("Nothing uncommitted — showing the commits HEAD has beyond main", out)
+        self.assertEqual(set(by_path(run_dir)), {"f1.txt", "f2.txt"})
+        code, out, err = build(run_dir, notes_with())
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("WARNING", out)
+
+    def test_upstream_comes_first(self):
+        path = feature_branch()
+        git(path, "branch", "pushed", "HEAD~1")
+        git(path, "branch", "-u", "pushed")
+        run_dir, out = collect(path)
+        self.assertIn("beyond pushed", out)
+        self.assertEqual(list(by_path(run_dir)), ["f2.txt"])
+
+    def test_up_to_date_upstream_falls_through(self):
+        path = feature_branch()
+        git(path, "branch", "pushed", "HEAD")
+        git(path, "branch", "-u", "pushed")
+        run_dir, out = collect(path)
+        self.assertIn("beyond main", out)
+        self.assertEqual(set(by_path(run_dir)), {"f1.txt", "f2.txt"})
+
+    def test_uncommitted_work_wins(self):
+        path = feature_branch()
+        write(path, "a.txt", "b\n")
+        run_dir, out = collect(path)
+        self.assertNotIn("Nothing uncommitted", out)
+        self.assertEqual(list(by_path(run_dir)), ["a.txt"])
+
+    def test_explicit_ref_never_falls_back(self):
+        path = feature_branch()
+        code, out, _ = run(path, "collect", "HEAD", "--out-root", OUT)
+        self.assertEqual((code, out.strip()), (0, "No changes."))
+
+
+class RunDirectories(unittest.TestCase):
+
+    def test_private_and_rotated(self):
+        root = os.path.join(tempfile.mkdtemp(), "cache")
+        path = repo({"a.txt": "a\n"})
+        write(path, "a.txt", "b\n")
+        repo_dir = os.path.join(root, os.path.basename(path))
+        os.makedirs(repo_dir)
+        for k in range(difftour.KEEP_RUNS + 3):              # older runs, oldest first
+            old = os.path.join(repo_dir, f"20200101-0000{k:02d}")
+            os.makedirs(old)
+            with open(os.path.join(old, "hunks.json"), "w") as fh:
+                fh.write("{}")
+        os.makedirs(os.path.join(repo_dir, "keep-me"))       # not a run directory
+        code, out, err = run(path, "collect", "--out-root", root)
+        self.assertEqual(code, 0, err)
+        run_dir = out.splitlines()[0].split(": ", 1)[1]
+        self.assertEqual(os.stat(run_dir).st_mode & 0o777, 0o700)
+        left = sorted(os.listdir(repo_dir))
+        self.assertIn("keep-me", left)
+        self.assertIn(os.path.basename(run_dir), left)
+        runs = [d for d in left if d != "keep-me"]
+        self.assertEqual(len(runs), difftour.KEEP_RUNS)
+        self.assertNotIn("20200101-000000", runs)            # the oldest went first
+        self.assertIn(f"20200101-0000{difftour.KEEP_RUNS + 2:02d}", runs)
+
+    def test_new_directories_are_private(self):
+        root = os.path.join(tempfile.mkdtemp(), "a", "cache")
+        run_dir = difftour.new_run_dir(root, "repo")
+        for d in (root, os.path.dirname(run_dir), run_dir):
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
 
 
 class Noise(unittest.TestCase):
@@ -514,6 +641,8 @@ class Build(unittest.TestCase):
         self.assertIn('<table class="diff split"', html)
         self.assertIn("<b>Фикс.</b>", html)
         self.assertNotIn('<div class="banner">', html)
+        self.assertIn(f'src="{difftour.HLJS}" integrity="{difftour.HLJS_SRI}" '
+                      f'crossorigin="anonymous"', html)
 
     def test_anchored_note_follows_its_line(self):
         run_dir, _ = collect(three_changes())
