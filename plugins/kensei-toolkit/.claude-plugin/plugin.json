@@ -1,10 +1,12 @@
 {
   "name": "kensei-toolkit",
-  "version": "2.0.0",
+  "displayName": "Kensei Toolkit",
+  "version": "2.0.1",
   "description": "Skill collection — tracker task runner with a publish guard, annotated diff tour, design brainstorm, Unity code review, session learnings to CLAUDE.md and memory, loose ends to Todoist or ClickUp",
   "author": {
     "name": "Kensei"
   },
+  "homepage": "https://github.com/KenseiTheOne/kensei-claude-plugins#kensei-toolkit",
   "repository": "https://github.com/KenseiTheOne/kensei-claude-plugins",
   "license": "MIT",
   "keywords": ["ticket", "tracker", "workflow", "guard", "diff", "code-review", "brainstorm", "design", "unity", "claude-md", "memory", "todo", "todoist", "clickup"]

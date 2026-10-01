@@ -1,5 +1,7 @@
 name: CI
 
+# Every check lives in scripts/check.sh; the jobs only provide the tools it needs.
+
 on:
   push:
     branches: [main]
@@ -9,65 +11,45 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Claude Code version the plugins were last validated with locally (`claude --version`).
+  CLAUDE_CODE_VERSION: "2.1.286"
+
 jobs:
   tests:
-    name: Script tests (${{ matrix.os }})
+    name: Script tests (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.9"  # the oldest Python the README promises
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: guard (ticket)
-        working-directory: plugins/kensei-toolkit/skills/ticket
-        run: python3 guard_test.py
-      - name: diff-tour
-        working-directory: plugins/kensei-toolkit/skills/diff-tour
-        run: python3 difftour_test.py
-      - name: statusline
-        working-directory: plugins/kensei-statusline/scripts
-        run: python3 statusline_test.py
+          python-version: ${{ matrix.python }}
+      - run: scripts/check.sh tests
 
   validate:
-    name: Manifests and skills
+    name: Manifests and frontmatter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-      - name: claude plugin validate --strict
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Claude Code and PyYAML
         run: |
-          claude --version
-          claude plugin validate --strict .
-          for p in plugins/*/; do
-            claude plugin validate --strict "$p"
-            claude plugin validate --strict "${p}skills"
-          done
-      - name: Frontmatter parses as strict YAML
-        # Claude Code tolerates some invalid YAML (e.g. ": " inside a plain scalar); other tools do not.
-        run: |
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
           python3 -m pip install --quiet pyyaml
-          python3 - <<'EOF'
-          import glob, sys, yaml
-          bad = 0
-          for path in sorted(glob.glob("plugins/*/skills/*/SKILL.md") + glob.glob("plugins/*/evals/*/prompt.md")
-                            + glob.glob("plugins/*/evals/*/graders/*.md")):
-              text = open(path, encoding="utf-8").read()
-              try:
-                  _, front, _ = text.split("---\n", 2)
-                  assert isinstance(yaml.safe_load(front), dict)
-              except Exception as error:
-                  bad += 1
-                  print(f"{path}: {error}")
-          sys.exit(1 if bad else 0)
-          EOF
+      - run: scripts/check.sh validate yaml
       - name: Release tag matches plugin.json
         if: startsWith(github.ref, 'refs/tags/')
         run: |

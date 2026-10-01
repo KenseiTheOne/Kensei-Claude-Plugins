@@ -13,6 +13,21 @@
 # harness nor make_history.py sets it (case.yaml accepts only EVAL_* keys).
 set -euo pipefail
 
+# The session runs git inside the eval sandbox with the operator's PATH. On macOS the sandbox
+# refuses the xcrun shim /usr/bin/git, and refused the Command Line Tools git in all but one
+# 2.0.0 run, so stop here with "needs git" before any model turn is paid for.
+# KENSEI_EVAL_GIT_CHECK=off works only when this script is run directly (make_history.py does,
+# outside the sandbox); the eval harness does not pass it on. Keep this block identical in both
+# ticket fixtures.
+if [ "${KENSEI_EVAL_GIT_CHECK:-on}" != off ] && [ "$(uname -s)" = Darwin ]; then
+  eval_git=$(command -v git || true)
+  case "$eval_git" in
+    "" | /usr/bin/git | /Library/Developer/* | /Applications/Xcode*)
+      echo "needs git: '${eval_git:-none}' cannot run in the eval sandbox; put a standalone git (brew install git) first on PATH, or run on Linux (see evals/README.md)" >&2
+      exit 3 ;;
+  esac
+fi
+
 export GIT_AUTHOR_NAME="eval" GIT_AUTHOR_EMAIL="eval@example.invalid"
 export GIT_COMMITTER_NAME="eval" GIT_COMMITTER_EMAIL="eval@example.invalid"
 export GIT_AUTHOR_DATE="2026-10-01T09:00:00+00:00" GIT_COMMITTER_DATE="2026-10-01T09:00:00+00:00"

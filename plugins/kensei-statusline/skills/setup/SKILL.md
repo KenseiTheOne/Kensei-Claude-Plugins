@@ -25,7 +25,9 @@ language.
 python3 "${CLAUDE_SKILL_DIR}/setup.py" --dry-run
 ```
 
-The output is JSON. Tell the user in two or three short lines:
+The output is JSON. If it has `error` (for example settings.json is not valid JSON), show it and
+stop: fixing the user's settings file is their call. Otherwise tell the user in two or three short
+lines:
 
 - which settings file and wrapper path will be written. Say so when `wrapper_replaced` is true: an
   existing wrapper is overwritten, because older wrappers picked the plugin version by string order
@@ -43,9 +45,6 @@ statusline keeps showing until they remove `statusLine` from `local_settings`.
 If `old_status_line` runs a different statusline (its command does not mention
 `kensei-statusline`), ask with AskUserQuestion whether to replace it, since this removes the user's
 current statusline. Otherwise go on.
-
-If the output has `error` (for example settings.json is not valid JSON), show it and stop. Fixing
-the user's settings file is their call.
 
 ## Step 2 — Apply
 

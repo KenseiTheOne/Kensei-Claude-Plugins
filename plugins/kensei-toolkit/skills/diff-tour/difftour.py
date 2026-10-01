@@ -5,7 +5,8 @@
       Snapshot the diff into a new run directory (patch.diff + hunks.json) and print the index
       of its units. No argument: HEAD against the working tree, untracked files included; when
       nothing is uncommitted, the commits HEAD has beyond its upstream (or else the default
-      branch) instead. REF: the merge-base of REF and HEAD against the working tree, untracked
+      branch) instead; a HEAD that shares no history with any of them (an orphan branch) shows
+      nothing and says so. REF: the merge-base of REF and HEAD against the working tree, untracked
       included (for a REF that HEAD descends from, that is REF itself). A..B: that range only —
       A and B may be commits or tree ids (a `git write-tree` result). A...B: from the merge-base
       of two commits. Run directories go under DIR/<repo>/ (default ~/.cache/kensei-diff), private
@@ -32,6 +33,7 @@ import os
 import pathlib
 import re
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -46,7 +48,6 @@ DEFAULT_NOISE = [
     "go.sum", "packages.lock.json", "*.min.js", "*.min.css", "*.map",
 ]
 BIG_DIFF = 3000        # changed lines outside noise before collect warns
-BIG_UNIT = 400         # diff lines in one unit before the page folds it
 HIGHLIGHT_MAX = 20000  # diff lines on the page above which syntax highlighting is skipped
 # Overrides for whatever the user's .gitconfig says about diff output (noprefix, color, external,
 # submodule=log|diff — which would drop a gitlink change or inline the submodule's own files).
@@ -186,19 +187,28 @@ def fallback_refs(root):
 
 
 def after_commit(root, spec):
-    """(spec, patch, skipped) against the first fallback ref HEAD has commits beyond, or None."""
+    """(spec, patch, skipped) against the first fallback ref HEAD has commits beyond, or
+    (None, unrelated): the fallback refs HEAD shares no history with, when it shares history
+    with none of them (an orphan branch), else an empty list."""
     if not spec["head"]:
-        return None
+        return None, []
+    unrelated, related = [], False
     for ref in fallback_refs(root):
         if not commit_of(root, ref):
             continue
+        tip = commit_of(root, ref)
+        if not git(root, "merge-base", ref, spec["head"], ok=(0, 1)).strip():
+            unrelated.append(ref)  # no shared history (an orphan branch): not HEAD's work
+            continue
+        # HEAD's own upstream at HEAD (an orphan branch pushed with -u) relates it to nothing
+        related = related or tip != spec["head"]
         later = resolve(root, ref)
         if later["sha"] == spec["head"]:
             continue  # HEAD adds nothing to this ref
         patch, skipped = take(root, later)
         if patch.strip():
-            return later, patch, skipped
-    return None
+            return (later, patch, skipped), []
+    return None, ([] if related else unrelated)
 
 
 def sha256(data):
@@ -356,7 +366,7 @@ def project_noise(root):
 
 
 def is_noise(path, patterns):
-    """gitignore-like globs: a pattern without `/` matches a name at any depth; one with `/`
+    """gitignore-like globs: a pattern without `/` matches a file name at any depth; one with `/`
     (or a leading `/`) matches from the repository root; a leading `**/` lets it start at any
     directory; a trailing `/` means a directory and everything under it."""
     parts = path.split("/")
@@ -516,13 +526,17 @@ def collect(arg, out_root):
     root = toplevel(os.getcwd())
     spec = resolve(root, arg)
     patch, skipped = take(root, spec)
-    fallback = None
+    fallback, unrelated = None, []
     if not patch.strip() and not arg:
-        fallback = after_commit(root, spec)
+        fallback, unrelated = after_commit(root, spec)
         if fallback:
             spec, patch, skipped = fallback
     if not patch.strip():
         print("No changes.")
+        if unrelated:
+            print(f"HEAD shares no history with {', '.join(unrelated)}, so nothing is shown — "
+                  "pass a ref or range to compare with (e.g. `collect <ref>` or "
+                  "`collect A..B`).")
         for path in skipped:
             print(f"Skipped untracked nested repository: {path}")
         return 0
@@ -847,200 +861,22 @@ LABELS = {
     },
 }
 
-FONTS = ("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600"
-         "&family=JetBrains+Mono:wght@400;500&display=swap")
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
-DARK = """color-scheme:dark;--bg:#0f1217;--surface:#161a21;--surface-2:#1b2029;--ink:#e3e7ee;
---muted:#98a2b3;--rule:#2a313c;--accent:#86a8ff;--on-accent:#0f1217;--add-bg:rgba(52,168,83,.14);
---add-strong:rgba(52,168,83,.30);--add-ink:#7fd497;--del-bg:rgba(229,72,90,.14);
---del-strong:rgba(229,72,90,.30);--del-ink:#ff9aa8;--moved-bg:rgba(140,120,255,.14);
---moved-strong:rgba(140,120,255,.30);--moved-ink:#b8abff;--note-bg:#2a2412;--note-rule:#8a7222;
---note-ink:#f1e2b0;--loose-bg:rgba(229,72,90,.12);--loose-rule:#b0485a;--loose-ink:#ffc2cb;
---ok:#7fd497;--ok-bg:rgba(52,168,83,.16);--warn:#f0c060;--warn-bg:rgba(240,190,80,.14);
---lineno:#5f6a7b;--hl-kw:#d59cf5;--hl-type:#6fc6e3;--hl-str:#f0b36b;--hl-num:#8ab8ff;
---hl-com:#93a47a;"""
 
-CSS = """
-:root{color-scheme:light;--bg:#f4f5f8;--surface:#fff;--surface-2:#f8f9fb;--ink:#1c2330;
---muted:#5d6778;--rule:#dde1e8;--accent:#2957c4;--on-accent:#fff;--add-bg:#e4f4e8;--add-strong:#bfe5c8;
---add-ink:#1d6b33;--del-bg:#fbe9eb;--del-strong:#f3c6cc;--del-ink:#a3243a;--moved-bg:#eeecfb;
---moved-strong:#d6d1f6;--moved-ink:#5a47b8;--note-bg:#fff7de;--note-rule:#e3c25a;
---note-ink:#4a3b0c;--loose-bg:#fdecee;--loose-rule:#d9667a;--loose-ink:#6b1424;--ok:#1d7a3e;
---ok-bg:#e2f3e7;--warn:#8a5a00;--warn-bg:#fdf0d2;--lineno:#9aa3b2;--hl-kw:#8a2bb0;
---hl-type:#0f6c8c;--hl-str:#a05a00;--hl-num:#1f6fb2;--hl-com:#6b7a52;
---sans:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
---mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%DARK%}}
-:root[data-theme="dark"]{%DARK%}
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;
-line-height:1.5;padding:0 16px 48px}
-.wrap{max-width:1320px;margin:0 auto}
-header.top{padding:28px 0 18px;display:grid;gap:14px}
-header.top>*{min-width:0}
-.eyebrow>*,h1,.lede{overflow-wrap:anywhere}
-.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);
-display:flex;flex-wrap:wrap;gap:6px 14px}
-.eyebrow a{color:var(--accent);text-decoration:none}.eyebrow a:hover{text-decoration:underline}
-h1{font-size:28px;line-height:1.2;font-weight:600;margin:0;text-wrap:balance}
-.lede{margin:0;max-width:68ch}
-code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);
-border:1px solid var(--rule);border-radius:4px;padding:0 4px}
-.banner{margin:0 0 14px;padding:10px 14px;border:1px solid var(--note-rule);border-radius:8px;
-background:var(--warn-bg);color:var(--ink)}
-.banner.quiet{border-color:var(--rule);background:var(--surface-2);color:var(--muted)}
-.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;
-margin-bottom:18px}
-.panel{background:var(--surface);border:1px solid var(--rule);border-radius:8px;
-padding:14px 16px;display:grid;gap:8px;align-content:start}
-.panel h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
-color:var(--muted);margin:0}
-.panel p{margin:0}
-.checks{list-style:none;margin:0;padding:0;display:grid;gap:6px}
-.checks li{display:flex;gap:8px;align-items:baseline}
-.checks a{font-family:var(--mono);font-size:12px;color:var(--accent);text-decoration:none}
-.pill{flex:none;font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 7px;
-border-radius:999px;background:var(--ok-bg);color:var(--ok)}
-.pill.warn{background:var(--warn-bg);color:var(--warn)}
-.pill.bad{background:var(--loose-bg);color:var(--loose-ink)}
-.pill.muted{background:var(--surface-2);color:var(--muted)}
-.toolbar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--rule);
-padding:10px 0;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;
-justify-content:space-between}
-.files-nav{display:flex;flex-wrap:wrap;gap:6px;min-width:0;max-width:100%}
-.files-nav a{font-family:var(--mono);font-size:12px;color:var(--ink);text-decoration:none;
-background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:3px 8px;
-display:inline-flex;gap:6px;align-items:baseline}
-.files-nav a:hover{border-color:var(--accent)}
-.files-nav a.loose{border-color:var(--loose-rule)}
-a:focus-visible,.seg button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);
-outline-offset:2px}
-.stat-add{color:var(--add-ink)}.stat-del{color:var(--del-ink)}
-.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-.seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;
-background:var(--surface)}
-.seg button{font:500 13px var(--sans);color:var(--muted);background:transparent;border:0;
-padding:5px 12px;cursor:pointer}
-.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
-.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--muted)}
-.legend span{display:inline-flex;align-items:center;gap:5px}
-.sw{width:12px;height:12px;border-radius:3px;display:inline-block}
-.sw.add{background:var(--add-strong)}.sw.del{background:var(--del-strong)}
-.sw.mov{background:var(--moved-strong)}
-.sw.s-note{background:var(--note-bg);border:1px solid var(--note-rule)}
-.sw.s-loose{background:var(--loose-bg);border:1px solid var(--loose-rule)}
-.file{margin-top:18px;background:var(--surface);border:1px solid var(--rule);border-radius:8px;
-overflow:hidden;scroll-margin-top:calc(var(--tb,70px) + 8px)}
-.file.loose{border-color:var(--loose-rule)}
-.file>summary{list-style:none;cursor:pointer;padding:10px 14px;display:flex;flex-wrap:wrap;
-gap:6px 12px;align-items:baseline;border-bottom:1px solid var(--rule);background:var(--surface-2)}
-.file>summary::-webkit-details-marker{display:none}
-.file:not([open])>summary{border-bottom:0}
-.chev{font-family:var(--mono);color:var(--muted);width:1ch}
-.file[open] .chev::before{content:"▾"}.file:not([open]) .chev::before{content:"▸"}
-.fpath{font-family:var(--mono);font-size:13px;font-weight:500;word-break:break-all;
-flex:0 1 auto;min-width:0}
-.fpath .dir{color:var(--muted);font-weight:400}
-.role,.chip{font-size:11px;padding:1px 7px;border-radius:4px;border:1px solid var(--rule);
-color:var(--muted)}
-.role{font-weight:600;text-transform:uppercase;letter-spacing:.05em}
-.role.prod{color:var(--accent);border-color:var(--accent)}
-.fstat{font-family:var(--mono);font-size:12px;margin-left:auto}
-.prelude{padding:4px 0}
-.empty{margin:0;padding:10px 14px;color:var(--muted)}
-.scroll{overflow-x:auto}
-table.diff,code{font-variant-ligatures:none}
-table.diff{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;
-line-height:1.55;font-variant-numeric:tabular-nums}
-table.diff td{padding:0 10px;vertical-align:top;white-space:pre}
-td.ln{width:1%;min-width:44px;text-align:right;color:var(--lineno);user-select:none;
-padding-right:8px}
-td.sign{width:1%;padding:0 4px;user-select:none;color:var(--muted)}
-tr.add td{background:var(--add-bg)}tr.add td.sign{color:var(--add-ink)}
-tr.del td{background:var(--del-bg)}tr.del td.sign{color:var(--del-ink)}
-tr.moved td{background:var(--moved-bg)}tr.moved td.sign{color:var(--moved-ink)}
-td.c-add{background:var(--add-bg)}td.c-del{background:var(--del-bg)}
-td.c-moved{background:var(--moved-bg)}td.c-empty{background:var(--surface-2)}
-tr.hunk td{background:var(--surface-2);color:var(--muted);padding-top:3px;padding-bottom:3px;
-border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
-table.split td.code{width:50%}
-table.split td.code+td.ln{border-left:1px solid var(--rule)}
-table.split{display:none}
-:root[data-view="split"] table.split{display:table}
-:root[data-view="split"] table.unified:not(.solo){display:none}
-.cr,.nonl{color:var(--muted)}
-tr.note-row td{padding:0;white-space:normal}
-.note{position:sticky;left:12px;max-width:min(78ch,calc(100vw - 110px));
-margin:8px 12px 8px 60px;background:var(--note-bg);color:var(--note-ink);
-border:1px solid var(--note-rule);border-left-width:4px;border-radius:6px;padding:9px 12px;
-font-family:var(--sans);font-size:14px;line-height:1.5;max-width:78ch}
-.note b{font-weight:600}
-.note code{background:transparent;border-color:var(--note-rule)}
-.note .pill{margin-right:8px}
-.note.inferred{border-style:dashed;border-left-style:solid}
-.note .src{font-size:11px;color:var(--muted);border:1px dashed var(--note-rule);border-radius:4px;
-padding:0 6px;margin-right:8px;white-space:nowrap}
-.note.loose{background:var(--loose-bg);color:var(--loose-ink);border-color:var(--loose-rule)}
-.note.loose code{border-color:var(--loose-rule)}
-.hljs-keyword,.hljs-built_in,.hljs-literal,.hljs-selector-tag{color:var(--hl-kw)}
-.hljs-type,.hljs-title,.hljs-name,.hljs-section,.hljs-attr,.hljs-attribute,.hljs-meta,
-.hljs-variable,.hljs-template-variable{color:var(--hl-type)}
-.hljs-string,.hljs-char,.hljs-regexp{color:var(--hl-str)}
-.hljs-number,.hljs-bullet,.hljs-symbol{color:var(--hl-num)}
-.hljs-comment,.hljs-quote{color:var(--hl-com);font-style:italic}
-.hljs-strong{font-weight:600}.hljs-emphasis{font-style:italic}
-footer.foot{margin-top:24px;color:var(--muted);font-size:13px;display:grid;gap:4px}
-.files-nav a{max-width:100%;overflow-wrap:anywhere}
-@media (max-width:640px){h1{font-size:22px}.note{margin-left:12px}.fstat{margin-left:0}
-.files-nav{flex-wrap:nowrap;overflow-x:auto}.files-nav a{flex:none;max-width:none}
-.legend{display:none}}
-""".replace("%DARK%", DARK)
+def asset(name):
+    """An assets/ file as written, minus the one newline that ends the file."""
+    with open(os.path.join(ASSETS, name), encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    return text[:-1] if text.endswith("\n") else text
 
-PAGE_JS = """
-(function(){"use strict";
-var root=document.documentElement,KEY="diff-tour-view";
-function show(v,save){root.setAttribute("data-view",v);
-document.querySelectorAll(".seg button").forEach(function(b){
-b.setAttribute("aria-pressed",String(b.getAttribute("data-view")===v));});
-if(save){try{localStorage.setItem(KEY,v);}catch(e){}}}
-var v=null;try{v=localStorage.getItem(KEY);}catch(e){}
-if(v!=="split"&&v!=="unified"){v=window.matchMedia&&matchMedia("(max-width: 760px)").matches
-?"unified":"split";}
-if(!document.querySelector("table.split"))v="unified";
-show(v,false);
-document.querySelectorAll(".seg button").forEach(function(b){b.addEventListener("click",
-function(){show(b.getAttribute("data-view"),true);});});
-var bar=document.querySelector(".toolbar");
-function fit(){if(bar)root.style.setProperty("--tb",bar.offsetHeight+"px");}
-fit();window.addEventListener("resize",fit);
-document.addEventListener("click",function(e){var a=e.target.closest("a[data-unit]");if(!a)return;
-var sel='[data-unit="'+a.getAttribute("data-unit")+'"]';
-var t=document.querySelector("table."+root.getAttribute("data-view")+" "+sel)||
-document.querySelector("table.solo "+sel)||document.querySelector(".prelude"+sel);
-if(!t)return;e.preventDefault();var d=t.closest("details");if(d)d.open=true;
-t.scrollIntoView({block:"center"});});
-function lines(html){var out=[],open=[],cur="",re=/<span[^>]*>|<\\/span>|\\n|[^<\\n]+/g,m;
-while((m=re.exec(html))){var t=m[0];
-if(t==="\\n"){out.push(cur+Array(open.length+1).join("</span>"));cur=open.join("");}
-else if(t.charAt(0)==="<"){if(t.charAt(1)==="/")open.pop();else open.push(t);cur+=t;}
-else{cur+=t;}}
-out.push(cur+Array(open.length+1).join("</span>"));return out;}
-function paint(seq,lang){if(!seq.length)return;var out;
-try{out=lines(hljs.highlight(seq.map(function(x){return x[0].textContent;}).join("\\n"),
-{language:lang,ignoreIllegals:true}).value);}catch(e){return;}
-if(out.length!==seq.length)return;
-seq.forEach(function(x,i){if(x[1])x[0].innerHTML=out[i];});}
-if(window.hljs){document.querySelectorAll("table.diff[data-lang]").forEach(function(t){
-var lang=t.getAttribute("data-lang");if(!hljs.getLanguage(lang))return;
-var o=[],n=[];function flush(){paint(o,lang);paint(n,lang);o=[];n=[];}
-Array.prototype.forEach.call(t.rows,function(tr){if(tr.classList.contains("hunk")){flush();return;}
-tr.querySelectorAll("span.t").forEach(function(s){var side=s.getAttribute("data-s");
-if(side==="o"){o.push([s,true]);}else if(side==="n"){n.push([s,true]);}
-else{o.push([s,false]);n.push([s,true]);}});});flush();});}
-})();
-"""
+
+# page.html is the document shell ($lang, $title, $style, $body, $highlight, $script); page.css
+# holds the light theme and %DARK% where dark.css's tokens go (twice: by system preference and
+# by an explicit data-theme).
+PAGE = string.Template(asset("page.html"))
+CSS = asset("page.css").replace("%DARK%", asset("dark.css")) + "\n"
+PAGE_JS = asset("page.js") + "\n"
 
 
 def esc(s):
@@ -1331,15 +1167,7 @@ def render(meta, files, units, notes, drift, run_dir):
         # Old run directories have no "head": they were always HEAD-based.
         state = L["uncommitted"] if spec["sha"] == spec.get("head", spec["sha"]) else L["branch"]
 
-    out = [f'<!doctype html><html lang="{esc(notes.get("lang", "en"))}"><head>',
-           '<meta charset="utf-8">',
-           '<meta name="viewport" content="width=device-width,initial-scale=1">',
-           f'<title>{esc(plain(notes["title"]))}</title>',
-           '<link rel="preconnect" href="https://fonts.googleapis.com">',
-           '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-           f'<link rel="stylesheet" href="{FONTS}">',
-           f"<style>{CSS}</style></head><body><div class=\"wrap\">"]
-
+    out = []
     eyebrow = []
     link = notes.get("link")
     if link:
@@ -1403,11 +1231,13 @@ def render(meta, files, units, notes, drift, run_dir):
     if meta.get("skipped"):
         foot.append(f'<span>{esc(L["skipped"].format(paths=", ".join(meta["skipped"])))}</span>')
     out.append(f'<footer class="foot">{"".join(foot)}</footer></div>')
+    hl = ""
     if page.highlight:
-        out.append(f'<script src="{HLJS}" integrity="{HLJS_SRI}" crossorigin="anonymous" '
-                   f'referrerpolicy="no-referrer"></script>')
-    out.append(f"<script>{PAGE_JS}</script></body></html>")
-    return "\n".join(out), page.loose
+        hl = (f'<script src="{HLJS}" integrity="{HLJS_SRI}" crossorigin="anonymous" '
+              f'referrerpolicy="no-referrer"></script>\n')
+    doc = PAGE.substitute(lang=esc(notes.get("lang", "en")), title=esc(plain(notes["title"])),
+                          style=CSS, body="\n".join(out), highlight=hl, script=PAGE_JS)
+    return doc, page.loose
 
 
 def check_drift(meta):

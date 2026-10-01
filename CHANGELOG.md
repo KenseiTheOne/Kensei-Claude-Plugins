@@ -3,6 +3,244 @@
 Versions are per plugin and live in each plugin's `.claude-plugin/plugin.json`. Release tags are
 `<plugin>--v<version>` (`claude plugin tag`).
 
+## kensei-toolkit 2.0.1 — 2026-10
+
+Closes the guard gaps and the open items listed under "Not done" in 2.0.0. No breaking change:
+every 2.0.0 tag keeps its meaning, and `[send]` and `[delete-branch]` are new. Stricter in a few
+places: `git branch -d`, which passed with no command in 2.0.0, now needs a branch-delete
+command; a PR write runs in a command of its own; mail, chat and calendar sends need `[send]`. A
+bare «подтяни» / `git pull` needs `[reset]`, as in 2.0.0.
+
+### ticket guard (`guard.py`)
+- **Mail, chat and calendar are gated: `send` / `[send]`, one message or event per grant.**
+  Sends, replies, forwards, posts, reactions, invites and invite answers on mail and chat MCP
+  servers, chat message edits and deletes, any calendar event write, Slack canvases, and mail or
+  event tools on any other server (Outlook, M365, Workspace, Resend). Webhook POSTs through curl,
+  wget or httpie (Slack, Discord, Office, Telegram bots and others) too. Drafts and reads pass.
+  Typed: «отправь письмо», «напиши в слак», «создай встречу», «прими приглашение», "send the
+  email", "post it to slack", "schedule a meeting"; a message phrase needs somewhere to go, so
+  «напиши сообщение коммита» and «добавь событие в лог» send nothing. «назначь встречу» is now a
+  send, not a tracker edit. A cancelled meeting needs a `[send]` option.
+- **`RemoteTrigger` and `CronCreate` are in the matcher**: the main session asks the user,
+  subagents are refused; listing triggers and reading their runs pass.
+- **PowerShell is guarded like Bash** (it is in the matcher): git and gh found anywhere in a
+  statement (`&` calls, `git.exe`, backtick escapes, Start-Process, `cmd /c`), tracker and webhook
+  writes through Invoke-WebRequest / Invoke-RestMethod, tamper through cmdlets, `[IO.File]` and
+  redirects. Script blocks and pipelines in an array, a cast or a subexpression are read as
+  statements (`&{git push}`, `.{…}`, `ForEach-Object { … }`, `@(git push)`, `[void](git push)`,
+  `"$(git push)"`). Refused because they cannot be read: `iex` of anything but a plain literal,
+  encoded commands, `& (…)` or `$var` programs that may be git (`&("{0}{1}" -f 'gi','t')`,
+  `&(Get-Command gi*)`), `git @args`, and git after an environment variable that changes its
+  settings or runs a program — `$env:GIT_CONFIG_PARAMETERS=…`, `$env:GIT_SSH_COMMAND=…`,
+  `Set-Item env:…`, `[Environment]::SetEnvironmentVariable(…)`, a cmd `set` — as in Bash
+  (`$env:GIT_PAGER='cat'` passes). Names are matched without case, as Windows reads them
+  (`$env:git_ssh_command`, `$env:Git_Config_Parameters`, `cmd /c "set Git_Dir=…"`); a `cmd /c`
+  run from Bash is read for git and gh too. A RUN.md written through PowerShell sets the
+  session's run (the `PostToolUse` matcher includes it). The Windows support claim stands.
+- **The PR body is the approved one.** `gh pr create`, `gh pr edit --body…`, `gh api …/pulls` with
+  a body, GraphQL `createPullRequest` / `updatePullRequest` and GitHub/GitLab MCP PR writes pass
+  only with this run's `<run_dir>/PR-BODY.md`: `--body-file`, `"$(cat …)"`, `gh api -F body=@…`
+  (GraphQL: `body: $body` with `-F body=@…`), or identical text. The file counts as approved only
+  while its sha256 equals the last `pr_body_sha256:` line in `RUN.md`, which publish.md records
+  when the user approves the text: no line → refused with a hint, another hash → "changed since
+  the user approved it". The PR write runs in a command of its own: one that may also write
+  `PR-BODY.md` or `RUN.md` while it runs is refused — any statement but plain reads (`cat`,
+  `shasum`), `git` and `gh`, a redirect into a name built at run time (`> $P`,
+  `> PR-BODY.{md,x}`) or into either file in any case (`pr-body.md`); Bash or PowerShell. A
+  body in a nested field (`gh api -F input[body]=…`, GraphQL variables from `--input`) cannot be
+  checked and is refused. `--body-file` together with `--body` checks both. `--fill`, stdin,
+  another text, or no run are refused, and no tag approves another text. «обнови описание PR» /
+  "update the PR description" grant the edit (`[tracker-edit]` still works). Before, «открой PR»
+  let any body through.
+- **Quoted orders are not commands**: «тикет говорит: «запушь»», `says: "push"` grant nothing; a
+  whole message in quotes and an order outside the quotes still count.
+- **Writes after `cd` and copies into protected places**: redirects follow `cd` / `pushd` /
+  subshells in order; `cp`/`mv`/`install`/`ln`/`rsync`/`ditto`/`scp` check the target directory
+  (`-t`, `--target-directory`) and a directory copied over `~/.claude` (`cp -r x/ ~/.claude/`).
+- **Git settings that redirect a push or run a program are tampering**: `git config` writes to
+  `remote.*`, `branch.*`, `alias.*`, `url.*`, `include*`, `core.hooksPath`, `push.default`,
+  `core.editor`, `core.fsmonitor`, drivers and credential helpers, section rename/remove, `-e`,
+  `git remote add` / `set-url` / `set-head` / `rename`. The same settings written as files are
+  tampering too (Write/Edit, redirects, `tee`, `cp`/`mv`, PowerShell `Set-Content` and the like):
+  `.git/config` of the repository, a worktree or a submodule, `.git/hooks/*` and the
+  `core.hooksPath` directory, `.git/info/attributes`, `~/.gitconfig`,
+  `$XDG_CONFIG_HOME/git/config`, `/etc/gitconfig`, `$GIT_CONFIG_GLOBAL`, gh's `config.yml` (its
+  aliases), and a `.gitattributes` or the global attributes file naming a `filter=` / `diff=` /
+  `merge=` driver other than Git LFS (`filter=lfs`) and the built-in merge drivers. Paths are
+  compared without case, as on macOS and Windows (`.GIT/config`, `.git/HOOKS/pre-push`,
+  `~/.CLAUDE/settings.json`), and a link made to `.git`, `.claude` or a protected path (`ln -s
+  .git x`, `New-Item -ItemType SymbolicLink`) is tampering too.
+- **Files git itself writes at a path an option or a patch names are checked as writes**:
+  `checkout-index --prefix=…` (each tracked file under the prefix, so `--prefix=.git/` over a
+  tracked `config` is `.git/config`), `archive -o`, `diff` / `log --output`, `format-patch -o`,
+  `bundle create`, and `git apply` / `git am` — the paths inside a readable patch, with `-p` and
+  under `--directory` (a project `.claude/settings.json`, a `.gitattributes` naming a driver).
+  `tar -x` is checked by the members of an archive it can read, or by each tracked file under
+  the `--prefix` of a `git archive` piped into it (`git archive --prefix=.git/hooks/ HEAD | tar
+  -x`), and always by its `-C` directory. Refused as unreadable: such a path built at run time
+  (`--prefix=$X/`, `-o "$OUT"`), `--directory` outside the repository or not literal,
+  `--unsafe-paths` with a patch from stdin, a patch file it cannot open (written in the same
+  command). In a PR's own command these git writers count as rewriting `PR-BODY.md`.
+- **gh aliases are resolved**: `gh p 1` after `gh alias set p 'pr merge'` is a merge, a shell
+  alias (`!git push`) is read as that command, one the guard cannot read is refused. `gh alias
+  set` naming a gated write, and `gh alias import`, are tampering.
+- **One-off settings before git are refused as unreadable** (`opaque`): `git -c` / `--config-env`
+  with any of those keys, `core.sshCommand`, `core.pager`, `sequence.editor`, `remote.*` or
+  `url.*`, before any subcommand; `git --exec-path=…`; `GIT_CONFIG_*`, `GIT_SSH_COMMAND`,
+  `GIT_EDITOR`, `GIT_PAGER`, `GIT_EXEC_PATH`, `EDITOR` and the like set before git or exported
+  earlier in the same command. `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`,
+  `GIT_INDEX_FILE` and a plain pager or editor name pass, in the environment and in `-c` alike
+  (`GIT_PAGER=cat`, `git -c core.pager=cat log`, `git -c core.editor=true rebase --continue`).
+  `HOME`, `XDG_CONFIG_HOME` and `USERPROFILE` before git are refused too: they move the global
+  git config.
+- **gh reads its config where the command points it**: `GH_CONFIG_DIR` / `XDG_CONFIG_HOME` set
+  before gh (`VAR=… gh`, `export`, `env`, `$env:` in any case, cmd `set`) → its aliases are read
+  from that directory; a gh word gh does not know is refused as unreadable when that config
+  cannot be read or has no such alias (it may be written in the same command).
+- **A plain `git push` goes where the repository's settings send it**: `git push` / `git push
+  <remote>` and a branch pushed without `:dst` are resolved from `remote.<r>.push`,
+  `branch.<b>.pushRemote` / `remote.pushDefault`, `push.default` and `branch.<b>.merge` (config
+  only, no network). Landing on a base branch, a `+` refspec, a wildcard of all branches or
+  `push.default=matching` → a force push. Before, a bare `git push` from a branch tracking
+  `main` was a plain push.
+- **Git and gh writes run by another command are unreadable**: `rebase -x`, `bisect run`,
+  `submodule foreach`, `filter-branch --tree-filter` / `--index-filter` and its other filters,
+  `filter-repo` callbacks, `difftool` / `mergetool -x`, `grep -O`, `--upload-pack` /
+  `--receive-pack`, and git or gh through `xargs`, `parallel`, `find -exec`, `fd`, `watch` or
+  `entr` are refused when the command holds a git or gh write; `rebase -x 'npm test'` passes.
+- **PowerShell call operators without a space** (`&'git'`, `&("git")`, `.( "git" )`, `&{git
+  push}`) are read as git; a program that is not a plain literal (`& $g`, `&("gi"+"t")`) is
+  refused unless it clearly names another tool.
+- **GitHub GraphQL mutations are classified by name**: `createPullRequest` a PR,
+  `mergePullRequest` / auto-merge a merge, `updatePullRequest` / `closePullRequest` /
+  `reopenPullRequest` a tracker edit, `createRef` / `updateRef` / `deleteRef` a force push,
+  `createIssue` a task, release, repository and comment mutations their own classes, any other
+  mutation a tracker edit; queries pass. The query is read in every spelling gh takes
+  (`-f query=`, `-fquery=`, `--raw-field`, `--field=query=`, `-F query=@file`, a JSON `--input`
+  file), at `graphql`, `/graphql` or a full URL, and from curl, wget and httpie bodies posted to a
+  tracker's `/graphql` (`-d`, `--data*`, `--json`, `@file`). A query the guard cannot read — a
+  variable or substitution (`"$Q"`, `"$(cat q.graphql)"`, PowerShell `$q`), a missing file, a body
+  that is not literal JSON — is refused as unreadable; before, such a request passed with no
+  command at all. `gh api` fields in the joined spellings (`-fbody=…`) count for REST calls too.
+- `guard.py --post` never denies: any error ends it silently with exit 0.
+- **Plural and precise status**: a typed status command covers each task it names once (URL,
+  `KEY-123`, `#123`, a ClickUp id); a PR or commit link is no task; with none named it covers one
+  change. Before, «переведи задачи в ревью» allowed one change for any task.
+- `git worktree remove --force` needs `[reset]`.
+- **Branch delete is its own class, `branch-delete`**: `git branch -d` / `-D` / `--delete`, granted
+  by «удали / снеси / грохни ветку», "delete the branch", the new `[delete-branch]` tag, or
+  `[reset]`; it grants no reset, clean or worktree remove. In 2.0.0 `-d` passed with no command
+  and `-D` needed `[reset]`. «удали ветку на origin» is also a force
+  push. `branch -f` / `-M` / `-C` stay history writes.
+- More English phrases: "push to github", "push these", "commit with message …", "assign it to
+  me".
+- Fewer false blocks: a `$VAR` path is judged only by protected names (markers, plugin install,
+  settings files, the guard's own files), so `> "$LOG_DIR/hooks.log"` passes; `gh copilot` is
+  local.
+- Tests for `gh api` PR create, merge and `git/refs` writes; a smoke test on a sanitized real
+  Claude Code 2.1.286 transcript (typed command, queued message, answers) and the ClickUp tool
+  catalogue with each tool's class, both in `skills/ticket/testdata/`. 132 guard tests.
+- Measured: skill-frontmatter hooks do not register again in a resumed session until the skill
+  is invoked again.
+
+### ticket
+- **A third smaller**: the ticket text read per run (`SKILL.md` + `flow.md` + `publish.md`) went
+  from 80.4 KB in 2.0.0 to 54.3 KB, below 1.8's 60.2 KB (`SKILL.md` + `flow.md`; `wc -c`).
+  Rationale and repetition were cut; every rule, step and cross-reference stays. The guard's
+  internals live in its docstring.
+- Commands table and "The guard" rewritten as what the user sees: rows for `reset`, `delete a
+  branch` («удали ветку», «снеси ветку») and `send`, the `[send]` and `[delete-branch]` tags, the
+  PR-body rule with its hash, the status-per-task rule, quoted text, the new always-refused cases
+  (git settings as files, files git writes where an option or a patch says, one-off settings
+  before git and gh, git run by another command), and Known gaps limited to what is still open.
+- **The PR body approval is recorded**: when the user approves `PR-BODY.md` ("create as is
+  [pr]", or a new PR description), publish.md appends `pr_body_sha256: <sha256>` to `RUN.md` in
+  its own call, again after each re-approval; the guard refuses the PR without it.
+- After `--resume`, invoke `/ticket <same id>` again: that turns the guard back on and offers to
+  continue from the step reached.
+- The gate opens every `checked by eye` capture in the system image viewer, so the user sees the
+  frames, not only their paths: `/usr/bin/open` on macOS (as diff-tour does, past a terminal's
+  own `open` wrapper), `xdg-open` on Linux, `start` on Windows.
+- The gate's diff tour goes into the run directory (`--out-root <run_dir>`), so the page linked
+  from `REPORT.md` is not rotated out of the shared cache.
+- «обнови описание PR» rewrites `PR-BODY.md`, fact-checks and shows it, then runs `gh pr edit
+  --body-file`.
+
+### diff-tour
+- On a branch with no history in common with the upstream or default branch (an orphan branch),
+  it no longer shows a diff against that unrelated history: collect prints `No changes.` and a
+  line that HEAD shares no history with `<ref>`, suggesting a ref or range to pass — also when
+  the orphan branch was pushed with an upstream of its own.
+- `--out-root` is the caller's way to keep a page: runs under it are rotated on their own.
+- The page's HTML, CSS and JS moved to `assets/`; golden pages rendered by 2.0.0 check that the
+  output is byte for byte the same.
+- The noise-file syntax and run-directory rotation moved to the skill's `README.md`; leftover
+  headless advice and an unused constant removed. 68 tests.
+
+### brainstorm
+- Triggers on «брейншторм» and «побрейнштормим».
+
+### Repository
+- `scripts/check.sh` (tests, validate, strict YAML, now including each `case.yaml`) is the one
+  release check; CI and the README call it, so they no longer check different things.
+- CI pins Claude Code 2.1.286 and runs the tests on Python 3.9 as well.
+- README: a Requirements section (Claude Code 2.1.286+, python3 3.9+, git 2.25+, 2.28 for the
+  tests), the toolkit link goes to its section, the structure lists the new files.
+- `displayName` and `homepage` in both `plugin.json`.
+- Evals: the two ticket cases stop at once with "needs git" when the only git is the Xcode shim
+  the macOS eval sandbox cannot run; `evals/README.md` explains the Homebrew git fix and sketches
+  a manual Linux CI job, and warns that other git-using cases fail the same way there.
+
+### Not done in this release
+- No live run of the two ticket eval cases yet: this machine has no Homebrew git, and the Linux
+  CI job in `evals/README.md` is a sketch nobody has run. The commit path rests on the guard
+  tests, the real-transcript smoke test and the gate case's fixture.
+- That the plugin's subagent hook keeps working after `--resume` follows from its design (it does
+  not depend on the skill), not from a measurement.
+- Still not gated, by choice: mailbox housekeeping (labels, trash, spam), git settings
+  (`GIT_CONFIG_*`, `GIT_SSH_COMMAND`, …) exported by an earlier call (the same command is now
+  caught), git from a script or `.ps1`, a gh extension, unquoted reported speech, the target
+  status of a status command, a patch fed to `git apply` on stdin, a git alias for
+  `checkout-index` / `archive` / `apply` in the tamper check, and a gh `config.yml` rewritten in
+  the same command that points gh at it. The ticket text lists them as Known gaps.
+- Guard gaps found in the last review round, left as Known gaps (each fails open only when the
+  model already broke the skill's rules):
+  - A tar from stdin or one the guard cannot list, a git archive written earlier in the same
+    command included, is caught only for `-C .git/hooks`: `.git` and `~/.claude` pass.
+  - tar: an attached `-C<dir>`, name rewriting (`--transform`, `--xform`, `-s`), a tar in a
+    subshell after `cd` (`(cd .git && tar -x)`, `sh -c`), and any tar run from PowerShell.
+  - Other extractors and `patch` are not checked: `unzip`, `Expand-Archive`, `python -m tarfile`,
+    `busybox tar`, `pax`, `patch -p1 < x.diff`.
+  - `git merge-file` writes its first path, which gets no protected-path check.
+  - Globs in a target path are not expanded (`.git/conf*`, `--prefix=.gi?/`, `cp x .git/conf*`).
+  - PowerShell env writes in another shape: `-Value` or `-Force` before `-Path` (`Set-Item`,
+    `New-Item`, `Set-Content`), `New-Item -Name … -Path env:`, an `Environment::` or computed
+    `env:` path (only `SetEnvironmentVariable($n, …)` is opaque), `Copy-Item` / `Rename-Item`
+    into `env:`, `Set-Location env:` then a bare name, `Start-Process -Environment` (PS 7.4+).
+  - gh's config dir: `GH_CONFIG_DIR` set in a parent for gh in a nested shell (`X=… bash -c`,
+    PowerShell `cmd /c "set X=… & gh"`) or by `readonly` / `eval` / `read`; and `HOME`,
+    `$env:AppData`, `$env:USERPROFILE`, which move gh's config, are not read for gh.
+- The PR-body hash proves the file has not changed since `pr_body_sha256:` was written, not that
+  the user approved it: the guard trusts the skill to write that line only at the approval.
+- `publish.md`'s approval record is checked against the guard by a probe, not yet by a live run
+  that opens a PR.
+- ClickUp operators are still judged by their names' words: the live catalogue has none enabled.
+- PerfectWar still needs `.claude/task-flow-rules.md` with `worktree_setup:` for worktree runs
+  (owner).
+- Installing through `claude plugin update` and restarting old sessions (owner).
+
+## kensei-statusline 1.5.1 — 2026-10
+
+- The usage-limit fetch moved to `scripts/usage.py`; the background refresh runs
+  `usage.py --refresh-usage`. Output is byte for byte the same; if `usage.py` is missing or broken,
+  only the server limit rows disappear and the rest of the statusline still prints.
+- Setup stops on a dry-run `error` (for example a broken `settings.json`) right after the dry run,
+  before describing any change.
+- Tests for the SessionStart setup check (missing, broken or non-object `settings.json`,
+  `settings.local.json`, the opt-out marker), the wrapper run from the installed location, the
+  refresh command, git states and rendering edge cases: 69 tests, about 95% line coverage of both
+  scripts.
+
 ## kensei-toolkit 2.0.0 — 2026-10
 
 Breaking: `ticket --unattended` is removed (see Removed), `todo` no longer writes a `TODO.md` unless
@@ -329,7 +567,7 @@ planned as 1.8.2 and the ticket rework planned as 1.9.0.
 - A commit on a base branch the session was already on stays `commit` (the user may choose to work
   on main); only one right after `git switch <base>` in the same command, or one that concludes a
   merge, is `merge-local`.
-- P2-17, the size of the ticket text, is deferred to 2.0.1: up to the gate it is smaller than in
+- The size of the ticket text is deferred to 2.0.1: up to the gate it is smaller than in
   1.8 (≈53 KB, was ≈60 KB), but with `publish.md` a run reads ≈80 KB, more than before.
 - PerfectWar still needs `.claude/task-flow-rules.md` with `worktree_setup:` for worktree runs.
 - diff-tour's HTML/CSS/JS stays inside `difftour.py` (no functional gain; tests use it directly).

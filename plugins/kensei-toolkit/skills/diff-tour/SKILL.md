@@ -69,12 +69,12 @@ Design rationale (the owner's notes, not shipped with the plugin):
    `id  status  path  @@ header [facts]  +added -removed  L<line in patch.diff>`.
    `hN` is one hunk, or a whole file that has no hunks (binary, pure rename, mode change).
    `nN` is a whole file matching a noise pattern: lock files, minified, source maps, and the
-   repository's optional `.claude/diff-tour-noise` — one gitignore-like glob per line: without
-   `/` it matches a name at any depth, with `/` (or a leading `/`) from the repository root, a
-   leading `**/` lets it start in any directory, a trailing `/` means a directory and everything
-   under it. Noise units need a note too: a lock file that changed for no reason is worth seeing.
+   repository's optional `.claude/diff-tour-noise` (syntax in `${CLAUDE_SKILL_DIR}/README.md`). Noise
+   units need a note too: a lock file that changed for no reason is worth seeing.
    - `No changes.` → nothing uncommitted and no commits beyond the upstream or default branch
-     (or the given ref/range is empty). Tell the user and stop.
+     (or the given ref/range is empty). Tell the user and stop. When it adds `HEAD shares no
+     history with <ref>` (an orphan branch with its own commits), say so and ask which ref or
+     range to compare with.
    - Exit 2 → show the error and stop.
    - A size `WARNING` → mention it to the user and carry on with the tour. Collect again with a
      narrower ref only if the user asks for one.
@@ -158,21 +158,19 @@ Design rationale (the owner's notes, not shipped with the plugin):
 
 ## When another skill calls it
 
-A skill that has its own snapshot to show (for example ticket's publish gate: "run the
-diff-tour against `<reviewed_tree>` vs `<base_sha>` and give the page path") runs the same
-steps with these differences:
+A skill that has its own snapshot to show (for example ticket's publish gate) passes the exact
+range and its own run directory: `<base_sha>..<reviewed_tree> --out-root <its run dir>`. The
+steps are the same, with these differences:
 
-- Collect the exact range: `collect <base_sha>..<reviewed_tree>`. A tree id is accepted on
-  either side, so the page shows the reviewed snapshot even if the working tree moved on.
+- A tree id is accepted on either side of the range, so the page shows the reviewed snapshot
+  even if the working tree moved on.
+- `--out-root` puts the tour under `<its run dir>/<repo>/`, so the page lives as long as the
+  caller's record that links to it. The default cache keeps only the newest 20 runs per
+  repository.
 - The calling skill's agreed criteria, test runs and review findings in this conversation
   are reasons you can point to, so notes built on them are `session`; the rules above still
   apply unchanged.
-- Add `--open` only when someone is at the screen. Without it, build just writes the page.
-  `--out-root <dir>` puts the run directory under `<dir>/<repo>/` instead of
-  `~/.cache/kensei-diff` — use a directory outside the work tree or a git-ignored one, so the
-  tour never shows up as untracked files in the next diff.
 - Hand back the `Page:` path and the counts line from build's output instead of the full
   report; the caller decides what to show.
 
-Run directories are private to the user (mode 0700); collect keeps the newest 20 per
-repository and deletes older ones.
+Run directories are private to the user (mode 0700).

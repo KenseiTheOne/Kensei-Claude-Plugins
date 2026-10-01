@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Tests for guard.py — run: python3 guard_test.py"""
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import re
+import shlex
 import tempfile
 import time
 import unittest
@@ -15,7 +17,8 @@ sys.path.insert(0, HERE)
 os.environ.pop("KENSEI_TASK_RUNS_DIR", None)  # the runs root is $HOME's below unless a test sets it
 import guard  # noqa: E402
 
-HOME = tempfile.mkdtemp()  # markers go to $HOME/.claude/task-runs/.guard — keep them out of ~
+HOME = tempfile.mkdtemp()
+shlex_quote = shlex.quote  # markers go to $HOME/.claude/task-runs/.guard — keep them out of ~
 
 
 def repo(branch):
@@ -41,6 +44,7 @@ def repo_with_commit():
 
 
 COMMITREPO = repo_with_commit()
+BODY = {"pr-body"}  # the classification tests leave out the PR body check; PrBodyTest covers it
 
 
 # --- transcript builders ------------------------------------------------------------------
@@ -159,6 +163,27 @@ def run_hook_output(tool_name, tool_input, entries, cwd=None, mode="--main", ses
 
 def bash(cmd):
     return ("Bash", {"command": cmd})
+
+
+PR_BODY = "Fixes the crash on load.\n\n- AC1 proven by test_load\n"
+
+
+def session_run(session, task="t-pr", body=PR_BODY, approved=True):
+    """A ticket session whose marker records a run directory holding RUN.md and PR-BODY.md;
+    with `approved`, RUN.md records the body's sha256 as the gate does when the user approves it."""
+    run = os.path.join(HOME, ".claude/task-runs", "repo", task)
+    os.makedirs(run, exist_ok=True)
+    with open(os.path.join(run, "RUN.md"), "w") as f:
+        f.write(f"task: {task}\n")
+        if body is not None and approved:
+            f.write(f"pr_body_sha256: {hashlib.sha256(body.encode()).hexdigest()}\n")
+    if body is not None:
+        with open(os.path.join(run, "PR-BODY.md"), "w") as f:
+            f.write(body)
+    os.makedirs(os.path.join(HOME, ".claude/task-runs/.guard"), exist_ok=True)
+    with open(os.path.join(HOME, ".claude/task-runs/.guard", session), "w") as f:
+        f.write(f"ticket session\nrun: {run}\n")
+    return run
 
 
 def flat(*parts):
@@ -345,7 +370,8 @@ class SkillTableTest(unittest.TestCase):
                "secrets": {"repo-admin-secrets"}, "ci": {"repo-admin-ci"},
                "branch protection": {"repo-admin-protection"},
                "delete a release or gist": {"repo-admin-delete"},
-               "reset": {"history"}}
+               "reset": {"history", "branch-delete"}, "delete a branch": {"branch-delete"},
+               "send": {"send"}}
     NOT_TYPED = {"task comment"}  # a comment is approved word for word ([post]), not typed
 
     def test_examples_are_recognized(self):
@@ -412,7 +438,7 @@ class SplitMultiTest(unittest.TestCase):
 
 class ClassifyTest(unittest.TestCase):
     def kinds(self, cmd, tool="Bash", cwd=None):
-        return sorted({g[0] for g in guard.classify(tool, {"command": cmd}, cwd or TASKREPO)})
+        return sorted({g[0] for g in guard.classify(tool, {"command": cmd}, cwd or TASKREPO)} - BODY)
 
     def test_git(self):
         k = self.kinds
@@ -434,10 +460,12 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(k("sudo -u me git push"), ["push"])
         self.assertEqual(k("caffeinate -i git push"), ["push"])
         self.assertEqual(k("env -S 'git push'"), ["push"])
-        self.assertEqual(k("find . -name x -exec git commit -m y \\;"), ["commit"])
-        self.assertEqual(k("echo a | xargs git commit -m"), ["commit"])
-        self.assertEqual(k("git submodule foreach git push"), ["push"])
-        self.assertEqual(k("git -c alias.pp=push pp"), ["push"])
+        # run once per input or submodule, or under a one-off alias: the guard cannot hold
+        # them to one grant
+        self.assertEqual(k("find . -name x -exec git commit -m y \\;"), ["opaque"])
+        self.assertEqual(k("echo a | xargs git commit -m"), ["opaque"])
+        self.assertIn("opaque", k("git submodule foreach git push"))
+        self.assertEqual(k("git -c alias.pp=push pp"), ["opaque"])
         self.assertEqual(k("echo 'git push' | sh"), ["push"])
         self.assertEqual(k("sh <<< 'git push'"), ["push"])
         self.assertEqual(k("bash <<EOF\ngit push\nEOF"), ["push"])
@@ -458,8 +486,8 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(k("git cherry-pick -n abc"), [])
         self.assertEqual(k("git stash push -m 'ticket 1'"), ["stash"])  # subagents only
         self.assertEqual(k("git fetch && git branch -a && git remote -v"), [])
-        self.assertEqual(k("git submodule foreach 'git push'"), ["push"])
-        self.assertEqual(k("find . -exec sh -c 'cd {} && git push' \\;"), ["push"])
+        self.assertEqual(k("git submodule foreach 'git push'"), ["opaque"])
+        self.assertEqual(k("find . -exec sh -c 'cd {} && git push' \\;"), ["opaque"])
         self.assertEqual(k("cat <<EO-F\nx\nEO-F\ngit push"), ["push"])
         self.assertEqual(k("cat <<END\nnever closed\ngit push"), ["push"])
         self.assertEqual(k("cat <<'EOF' | sh\ngit push\nEOF"), ["push"])
@@ -476,7 +504,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(k("git pull"), ["history"])
         self.assertEqual(k("git reset --hard HEAD~1"), ["history"])
         self.assertEqual(k("git reset -- file.txt"), [])
-        self.assertEqual(k("git branch -D task/1"), ["history"])
+        self.assertEqual(k("git branch -D task/1"), ["branch-delete"])
         self.assertEqual(k("git stash drop"), ["history"])
         self.assertEqual(k("git subtree push --prefix x origin y"), ["push"])
         self.assertEqual(k("git push", cwd=MAINREPO), ["force"])
@@ -510,7 +538,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.kinds("git push", tool="Monitor"), ["push"])
 
     def test_mcp(self):
-        k = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)})
+        k = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)} - BODY)
         self.assertEqual(k("mcp__clickup__clickup_get_task"), [])
         self.assertEqual(k("mcp__clickup__clickup_get_task_comments"), [])
         self.assertEqual(k("mcp__clickup__clickup_get_chat_channel_messages"), [])
@@ -570,7 +598,7 @@ class ClassifyTest(unittest.TestCase):
 
 class ClassifyMoreTest(unittest.TestCase):
     def kinds(self, cmd, cwd=None):
-        return sorted({g[0] for g in guard.classify("Bash", {"command": cmd}, cwd or TASKREPO)})
+        return sorted({g[0] for g in guard.classify("Bash", {"command": cmd}, cwd or TASKREPO)} - BODY)
 
     def test_bundled_short_flags(self):
         k = self.kinds
@@ -793,7 +821,7 @@ class ClassifyMoreTest(unittest.TestCase):
         # a commit on the base branch the user works on stays a commit; switching to the base
         # branch and writing history there in one command integrates into it
         self.assertEqual(k("git commit -m x", cwd=MAINREPO), ["commit"])
-        for cmd in ["git switch main && git cherry-pick task/1-x", "git switch main; git am x.patch",
+        for cmd in ["git switch main && git cherry-pick task/1-x", "git switch main; git am < x.patch",
                     "git switch main && git commit -m x"]:
             self.assertEqual(k(cmd), ["merge-local"], cmd)
         # bringing a base branch up to date from its own remote branch is a pull
@@ -831,7 +859,7 @@ class ClassifyMoreTest(unittest.TestCase):
 
     def test_create_task_status_and_publish(self):
         k = self.kinds
-        m = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)})
+        m = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)} - BODY)
         self.assertEqual(m("mcp__clickup__clickup_create_task", {"name": "n", "list_id": "1"}),
                          ["create-task"])
         self.assertEqual(m("mcp__github__create_issue", {"title": "x"}), ["create-task"])
@@ -893,7 +921,7 @@ class ClassifyMoreTest(unittest.TestCase):
         self.assertEqual(m("mcp__github__create_or_update_file"), ["push"])
 
     def test_mcp_more(self):
-        k = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)})
+        k = lambda name, inp=None: sorted({g[0] for g in guard.classify(name, inp or {}, TASKREPO)} - BODY)
         op = "mcp__clickup__clickup_execute_operator"
         for model, operator in [("task", "get"), ("task", "get_many"), ("list", "list_children"),
                                 ("comment", "list"), ("task", "search"), ("list", "get"),
@@ -932,7 +960,7 @@ class ClassifyMoreTest(unittest.TestCase):
         self.assertEqual(item[2], ["hi"])  # ids are not comment text
 
     def test_skill_and_send_message(self):
-        k = lambda name, inp: sorted({g[0] for g in guard.classify(name, inp, TASKREPO)})
+        k = lambda name, inp: sorted({g[0] for g in guard.classify(name, inp, TASKREPO)} - BODY)
         self.assertEqual(k("Skill", {"skill": "code-review", "args": "high --comment"}),
                          ["skill-post"])
         self.assertEqual(k("Skill", {"skill": "code-review", "args": "ultra 12 --post"}),
@@ -962,6 +990,10 @@ class TamperTest(unittest.TestCase):
                     f"cp {run}/RUN.md /tmp/x", "rm -rf build && git status",
                     f"echo done >> {run}/RUN.md", f"find {run} -name '*.tmp' -delete",
                     "python3 ~/.claude/plugins/cache/k/kensei-toolkit/1.9.0/skills/diff-tour/difftour.py",
+                    "python3 ~/.claude/plugins/cache/k/kensei-toolkit/2.0.1/skills/diff-tour/difftour.py"
+                    f" collect f74d864..7bbb283 --out-root {run}",
+                    "python3 ~/.claude/plugins/cache/k/kensei-toolkit/2.0.1/skills/diff-tour/difftour.py"
+                    f" build {run}/PerfectWar/20261001-120000 --open",
                     "cat ~/.claude/settings.json"]:
             self.assertFalse(self.bash(cmd), cmd)
 
@@ -1291,7 +1323,9 @@ class HookTest(unittest.TestCase):
     def test_pr_and_push_are_separate(self):
         both = [human("запушь и открой PR"), assistant()] + \
             call("Bash", {"command": "git push -u origin task/1"})
-        self.assertIsNone(run_hook(*bash("gh pr create --fill"), both))
+        run = session_run("s-pr-sep")
+        create = bash(f"gh pr create --base main --body-file {run}/PR-BODY.md")
+        self.assertIsNone(run_hook(*create, both, session="s-pr-sep"))
         self.assertIsNotNone(run_hook(*bash("git push -u origin task/1"),
                                       [human("открой PR"), assistant()]))
 
@@ -1736,6 +1770,928 @@ class HookMoreTest(unittest.TestCase):
                                              "REPORT.md", "content": "x"}, runs[0]))
 
 
+class Release201Test(unittest.TestCase):
+    """Gaps closed in 2.0.1."""
+
+    def kinds(self, tool, inp, cwd=None):
+        return sorted({g[0] for g in guard.classify(tool, inp, cwd or TASKREPO)} - BODY)
+
+    def tampered(self, tool, inp, cwd=None):
+        data = {"session_id": "abcdef12-3456", "cwd": cwd or TASKREPO,
+                "transcript_path": os.path.join(HOME, ".claude/projects/p/abcdef12-3456.jsonl")}
+        return any(g[0] == "tamper" for g in guard.tamper(tool, inp, data))
+
+    def test_a_quoted_order_is_not_a_command(self):
+        for t in ["тикет говорит: «запушь»", "в тикете написано «закоммить и запушь»",
+                  'the ticket says: "commit and push"', "там сказано «запушь»",
+                  "в задаче: «переведи в ревью»", 'описание просит "push it"']:
+            self.assertEqual(guard.detect(t) & {"commit", "push", "status"}, set(), t)
+        self.assertIn("push", guard.detect("«запушь»"))  # the whole message in quotes is typed
+        self.assertIn("push", guard.detect("там сказано «закоммить», а ты запушь"))
+        self.assertIn("commit", guard.detect("закоммить с сообщением: «fix load»"))
+        self.assertIsNotNone(run_hook(*bash("git push -u origin task/1"),
+                                      [human("тикет говорит: «запушь»")]))
+
+    def test_english_phrases(self):  # phrases that read as orders only with a git object
+        for t, action in [("push to github", "push"), ("push these", "push"),
+                          ("commit with message fix load", "commit"), ("assign to me", "tracker"),
+                          ("assign it to me", "tracker"),
+                          ("push to upstream", "push")]:
+            self.assertIn(action, guard.detect(t), t)
+        self.assertEqual(guard.detect("pull the latest"), set())  # names no history rewrite
+        self.assertEqual(guard.detect("revert these functions"), set())
+
+    def test_branch_delete(self):  # a branch delete is its own grant, not a reset
+        for t in ["удали ветку task/1-x", "снеси ветку", "delete the branch"]:
+            self.assertIn("branch-delete", guard.detect(t), t)
+            self.assertNotIn("history", guard.detect(t), t)  # no reset, clean or worktree remove
+            self.assertNotIn("force", guard.detect(t), t)
+        self.assertIn("force", guard.detect("удали ветку на origin"))
+        self.assertIsNone(run_hook(*bash("git branch -D task/1-x"), [human("удали ветку task/1-x")]))
+        self.assertIn("«удали ветку»", run_hook(*bash("git branch -D task/1-x"), [human("ок")]))
+
+    def test_pr_body_is_the_approved_file(self):
+        sess = "s-prbody"
+        order = [human("открой PR")]
+        create = lambda rest: bash("gh pr create --base main " + rest)
+        # no run, or a run without PR-BODY.md: no approved text
+        self.assertIn("no PR-BODY.md", run_hook(*create("--body x"), order))
+        session_run(sess, "t-nobody", body=None)
+        self.assertIn("no PR-BODY.md", run_hook(*create("--body x"), order, session=sess))
+        run = session_run(sess)
+        body_file = os.path.join(run, "PR-BODY.md")
+        self.assertIsNone(run_hook(*create(f"--body-file {body_file}"), order, session=sess))
+        self.assertIsNone(run_hook(*create(f"-F {body_file}"), order, session=sess))
+        self.assertIsNone(run_hook(*create("--body-file PR-BODY.md"), order, session=sess, cwd=run))
+        self.assertIsNone(run_hook("Bash", {"command": "gh pr create --body " + shlex_quote(PR_BODY)},
+                                   order, session=sess))
+        self.assertIsNone(run_hook("Bash", {"command": "gh pr create --body " +
+                                            shlex_quote(PR_BODY.rstrip())}, order, session=sess))
+        copy = os.path.join(tempfile.mkdtemp(), "body.md")
+        with open(copy, "w") as f:
+            f.write(PR_BODY)
+        self.assertIsNone(run_hook(*create(f"--body-file {copy}"), order, session=sess))
+        with open(copy, "w") as f:
+            f.write(PR_BODY + "\nP.S. one more line\n")
+        for rest in [f"--body-file {copy}", "--body 'Fixes the crash.'", "--fill",
+                     "--body-file - <<'EOF'\nx\nEOF", '--body "$(cat PR-BODY.md)"']:
+            self.assertIn("approved", run_hook(*create(rest), order, session=sess) or "", rest)
+        self.assertIsNone(run_hook(*create("--web"), order, session=sess))
+        # the PR command itself is still needed, and an edit of the body is held to the file too
+        self.assertIn("no command", run_hook(*create(f"--body-file {body_file}"), [human("ок")],
+                                             session=sess))
+        edit = [human("поправь описание PR")]
+        self.assertIn("differs", run_hook(*bash("gh pr edit 3 --body 'new text'"),
+                                          [answer("?", [("Edit [tracker-edit]", None)],
+                                                  "Edit [tracker-edit]")], session=sess))
+        self.assertIsNone(run_hook(*bash(f"gh pr edit 3 --body-file {body_file}"), edit,
+                                   session=sess))  # «поправь описание PR» is a tracker edit
+        self.assertIsNotNone(run_hook(*bash(f"gh pr edit 3 --body-file {body_file}"), order,
+                                      session=sess))  # editing the PR needs its own command
+        tag = [human("?"), answer("?", [("Edit [tracker-edit]", None)], "Edit [tracker-edit]")]
+        self.assertIsNone(run_hook(*bash(f"gh pr edit 3 --body-file {body_file}"), tag,
+                                   session=sess))
+        # the GitHub MCP and gh api
+        mcp = "mcp__github__create_pull_request"
+        self.assertIsNone(run_hook(mcp, {"title": "x", "body": PR_BODY}, order, session=sess))
+        self.assertIn("differs", run_hook(mcp, {"title": "x", "body": "other"}, order, session=sess))
+        self.assertIn("PR-BODY.md", run_hook(mcp, {"title": "x"}, order, session=sess))
+        self.assertIn("differs", run_hook(*bash("gh api repos/o/r/pulls -f title=x -f body=other"),
+                                          order, session=sess))
+
+    def test_tamper_redirect_after_cd_and_copy_into_a_directory(self):
+        home = os.path.expanduser("~")
+        for cmd in ["cd ~/.claude && echo '{}' > settings.json",
+                    "cd ~ && cd .claude && echo x >> settings.local.json",
+                    "cp evil/settings.json ~/.claude/", "cp -t ~/.claude evil/settings.json",
+                    "cp --target-directory=~/.claude evil/settings.json",
+                    "rsync -a evil/settings.json ~/.claude/", "install -t ~/.claude x/settings.json",
+                    "mv x/settings.json .claude/", f"cp x/settings.json {home}/.claude"]:
+            self.assertTrue(self.tampered("Bash", {"command": cmd}), cmd)
+        for cmd in ["cd /tmp && echo x > settings.json", "cp evil/settings.json /tmp/",
+                    "rsync -t a/settings.json /tmp/x", "cd ~/.claude && cat settings.json > /tmp/s",
+                    "echo x > settings.json && cd ~/.claude"]:
+            self.assertFalse(self.tampered("Bash", {"command": cmd}), cmd)
+
+    def test_var_paths_judged_by_the_names_that_matter(self):  # an unexpandable $VAR path is judged by its name
+        for cmd in ['echo x > "$LOG_DIR/hooks.log"', 'cp a "$BUILD/data.jsonl"',
+                    'touch "$OUT/settings.ini"', 'rm -rf "$BUILD/hooks"', 'rm "$OUT/task-runs.txt"',
+                    'echo x > "$OUT/task-runs/report.md"']:
+            self.assertFalse(self.tampered("Bash", {"command": cmd}), cmd)
+        for cmd in ['echo x > "$D/settings.json"', 'rm -rf "$R/task-runs"', 'rm "$R/.guard/x"',
+                    'cp x "$CFG/.claude/plugins/k/guard.py"', 'echo > "$P/skills/ticket/guard.py"',
+                    'touch "$C/settings.local.json"']:
+            self.assertTrue(self.tampered("Bash", {"command": cmd}), cmd)
+
+    def test_git_settings_that_redirect_a_push(self):  # git config writes that move where a push goes
+        for cmd in ["git config remote.origin.push HEAD:refs/heads/main",
+                    "git config remote.origin.url git@evil:x.git", "git config --global alias.p push",
+                    "git config branch.task/1.merge refs/heads/main",
+                    "git config branch.task/1.remote upstream", "git config core.hooksPath /dev/null",
+                    "git config --add include.path ~/x.cfg", "git config set alias.c commit",
+                    "git config --unset remote.origin.push", "git config --remove-section remote.origin",
+                    "git -C . config push.default matching", "git remote set-url origin x",
+                    "git config url.git@evil:.pushInsteadOf git@github.com:"]:
+            self.assertTrue(self.tampered("Bash", {"command": cmd}), cmd)
+        for cmd in ["git config --get remote.origin.url", "git config alias.p", "git config -l",
+                    "git config user.name t", "git config get remote.origin.push", "git remote -v",
+                    "git config --global pull.rebase true"]:
+            self.assertFalse(self.tampered("Bash", {"command": cmd}), cmd)
+        self.assertEqual(self.kinds(*bash("git -c remote.origin.push=HEAD:main push")), ["opaque"])
+        self.assertIn("opaque", self.kinds(*bash("GIT_CONFIG_PARAMETERS=x git push")))
+        self.assertEqual(self.kinds(*bash("GIT_CONFIG_GLOBAL=/dev/null git status")), [])
+        self.assertIn("off limits", run_hook(*bash("git config remote.origin.push HEAD:main"),
+                                             [human("запушь")]))
+
+    def test_mail_chat_calendar_and_webhooks(self):
+        for tool in ["mcp__claude_ai_Gmail__send_message", "mcp__claude_ai_Gmail__reply",
+                     "mcp__claude_ai_Gmail__forward", "mcp__gmail__send_draft",
+                     "mcp__claude_ai_Google_Calendar__create_event",
+                     "mcp__claude_ai_Google_Calendar__update_event",
+                     "mcp__claude_ai_Google_Calendar__respond_to_event",
+                     "mcp__claude_ai_Google_Calendar__delete_event", "mcp__slack__slack_post_message",
+                     "mcp__slack__slack_reply_to_thread", "mcp__claude_ai_Slack__slack_send_message",
+                     "mcp__slack__slack_add_reaction", "mcp__discord__send_message",
+                     "mcp__slack__slack_update_message"]:
+            self.assertEqual(self.kinds(tool, {}), ["send"], tool)
+        for tool in ["mcp__claude_ai_Gmail__create_draft", "mcp__claude_ai_Gmail__search_threads",
+                     "mcp__claude_ai_Gmail__get_message", "mcp__claude_ai_Gmail__list_labels",
+                     "mcp__claude_ai_Google_Calendar__list_events",
+                     "mcp__claude_ai_Google_Calendar__suggest_time",
+                     "mcp__slack__slack_get_channel_history"]:
+            self.assertEqual(self.kinds(tool, {}), [], tool)
+        for cmd in ["curl -X POST -d '{}' https://hooks.slack.com/services/A/B",
+                    "curl --json '{}' https://discord.com/api/webhooks/1/x",
+                    "wget --post-data=x https://outlook.office.com/webhook/x",
+                    "http POST https://acme.webhook.office.com/x text=hi"]:
+            self.assertEqual(self.kinds(*bash(cmd)), ["send"], cmd)
+        self.assertEqual(self.kinds(*bash("curl https://hooks.slack.com/x")), [])
+        send = ("mcp__claude_ai_Gmail__send_message", {"to": "a@b", "body": "hi"})
+        self.assertIn("[send]", run_hook(*send, [human("закоммить")]))
+        for t in ["отправь письмо Пете", "send the email", "напиши в слак"]:
+            self.assertIsNone(run_hook(*send, [human(t)]), t)
+        self.assertIsNone(run_hook("mcp__claude_ai_Google_Calendar__create_event", {},
+                                   [human("назначь встречу на завтра")]))
+        self.assertIsNone(run_hook(*send, [human("?"), answer("?", [("Отправить [send]", None)],
+                                                               "Отправить [send]")]))
+        once = flat(human("отправь письмо"), call(*send))
+        self.assertIsNotNone(run_hook(*send, once))
+        self.assertNotIn("send", guard.detect("назначь на меня"))
+        self.assertNotIn("tracker", guard.detect("назначь встречу"))
+
+    def test_remote_trigger_and_cron_are_confirmed(self):
+        session_run("s-sched")
+        for tool, inp in [("RemoteTrigger", {"action": "create", "body": {}}),
+                          ("RemoteTrigger", {"action": "run", "trigger_id": "t"}),
+                          ("CronCreate", {"cron": "7 * * * *", "prompt": "git push"})]:
+            out = run_hook_output(tool, inp, [human("запушь")])
+            self.assertEqual(out["permissionDecision"], "ask", (tool, inp))
+            out = run_hook_output(tool, inp, [human("запушь")], mode="--subagent",
+                                  session="s-sched", agent="a1")
+            self.assertEqual(out["permissionDecision"], "deny", (tool, inp))
+        for action in ("list", "get", "list_runs", "get_run_log"):
+            self.assertIsNone(run_hook("RemoteTrigger", {"action": action}, [human("?")]), action)
+
+    def test_powershell(self):
+        ps = lambda c: self.kinds("PowerShell", {"command": c})
+        self.assertEqual(ps("git push -u origin task/1"), ["push"])
+        self.assertEqual(ps('& "C:\\Program Files\\Git\\bin\\git.exe" commit -m x'), ["commit"])
+        self.assertEqual(ps("git status; git commit -m 'x'"), ["commit"])
+        self.assertEqual(ps("gh pr merge 3"), ["merge"])
+        self.assertEqual(ps('cmd /c "git commit -m x"'), ["commit"])
+        self.assertEqual(ps('Invoke-Expression "git commit -m x"'), ["commit"])
+        self.assertEqual(ps('$g = "git"; & $g push'), ["opaque"])
+        self.assertEqual(ps("Invoke-RestMethod -Method Post -Uri https://hooks.slack.com/x -Body $b"),
+                         ["send"])
+        self.assertEqual(ps("Invoke-RestMethod -Method Post -Uri https://api.github.com/repos/o/r/"
+                            "issues/1/comments -Body $b"), ["comment"])
+        for c in ["git log --oneline | Select-Object -First 3", "git status", "gh pr view 3",
+                  'Write-Output "git push"', "Invoke-RestMethod -Uri https://api.github.com/x"]:
+            self.assertEqual(ps(c), [], c)
+        for c in ["Set-Content -Path $HOME\\.claude\\settings.json -Value x",
+                  "'x' > ~/.claude/settings.json", "Remove-Item -Recurse ~/.claude/task-runs/.guard",
+                  "git config alias.p push", "claude plugin disable kensei-toolkit"]:
+            self.assertTrue(self.tampered("PowerShell", {"command": c}), c)
+        for c in ["Get-Content ~/.claude/settings.json", "Copy-Item a b", "git config -l"]:
+            self.assertFalse(self.tampered("PowerShell", {"command": c}), c)
+        push = ("PowerShell", {"command": "git push -u origin task/1"})
+        self.assertIsNotNone(run_hook(*push, [human("закоммить")]))
+        self.assertIsNone(run_hook(*push, [human("запушь")]))
+        # a PowerShell call that failed is used up: its exit status is not read
+        failed = flat(human("запушь"), failed_call(*push, output="Exit code 1"))
+        self.assertIsNotNone(run_hook(*push, failed))
+
+    def test_worktree_remove_force(self):  # --force drops uncommitted work in that worktree
+        self.assertEqual(self.kinds(*bash("git worktree remove --force ../wt")), ["history"])
+        self.assertEqual(self.kinds(*bash("git worktree remove -f ../wt")), ["history"])
+        self.assertEqual(self.kinds(*bash("git worktree remove ../wt")), [])
+        self.assertEqual(self.kinds(*bash("git worktree list")), [])
+
+    def test_gh_copilot_and_set_default(self):  # local helpers that write nothing remote
+        self.assertEqual(self.kinds(*bash("gh copilot suggest 'undo a commit'")), [])
+        self.assertEqual(self.kinds(*bash("gh copilot explain 'git rebase'")), [])
+        self.assertEqual(self.kinds(*bash("gh repo set-default o/r")), [])
+
+    def test_gh_api_pulls_merge_refs(self):  # REST forms of a PR, a merge and a ref update
+        api = lambda c: self.kinds(*bash("gh api " + c))
+        self.assertEqual(api("repos/o/r/pulls -f title=x -f head=a -f base=main"), ["pr"])
+        self.assertEqual(api("-X POST repos/o/r/pulls -f title=x"), ["pr"])
+        self.assertEqual(api("repos/o/r/pulls"), [])
+        self.assertEqual(api("repos/o/r/pulls/3"), [])
+        self.assertEqual(api("-X PUT repos/o/r/pulls/3/merge"), ["merge"])
+        self.assertEqual(api("repos/o/r/pulls/3/merge -X PUT -f merge_method=squash"), ["merge"])
+        self.assertEqual(api("-X PATCH repos/o/r/git/refs/heads/main -f sha=abc -F force=true"),
+                         ["force"])
+        self.assertEqual(api("-X POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc"), ["force"])
+        self.assertEqual(api("-X DELETE repos/o/r/git/refs/heads/x"), ["force"])
+        self.assertEqual(api("repos/o/r/git/refs/heads/main"), [])
+        self.assertEqual(api("-X PATCH repos/o/r/pulls/3 -f body=x"), ["tracker"])
+
+    def test_plural_status(self):  # one status change per task the user named
+        status = ("mcp__clickup__clickup_update_task", {"task_id": "86abc1x", "status": "review"})
+        second = ("mcp__clickup__clickup_update_task", {"task_id": "86abc2y", "status": "review"})
+        named = "переведи 86abc1x и 86abc2y в ревью"
+        two = flat(human(named), call(*status))
+        self.assertIsNone(run_hook(*second, two))  # the second named task
+        self.assertIn("named", run_hook(*status, two))  # the first one again: not twice
+        self.assertIsNotNone(run_hook(*second, two + call(*second)))  # no third
+        one = flat(human("переведи задачи в ревью"), call(*status))
+        self.assertIn("already used once", run_hook(*status, one))
+        links = ("move https://app.clickup.com/t/86a1b, https://app.clickup.com/t/86c2d and "
+                 "https://app.clickup.com/t/86e3f to review")
+        self.assertEqual(guard.status_grants(links), 3)
+        self.assertEqual(guard.status_grants("move ENG-1 and ENG-2 to review"), 2)
+        self.assertEqual(guard.status_grants("переведи #12 и #13 в ревью"), 2)
+        self.assertEqual(guard.status_grants("переведи задачи в ревью"), 1)
+        # a queued stop voids the remaining grants as well
+        stopped = flat(human(named), call(*status), queued("стоп"))
+        self.assertIsNotNone(run_hook(*status, stopped))
+
+
+class Release201ReviewTest(unittest.TestCase):
+    """Bypasses of the 2.0.1 rules: send phrasing, PowerShell forms, copies, status per task."""
+
+    kinds = Release201Test.kinds
+    tampered = Release201Test.tampered
+
+    def test_send_needs_somewhere_to_go(self):
+        for t in ["напиши сообщение коммита", "напиши сообщение в коммит", "добавь событие в лог",
+                  "отправь сообщение в коммит", "cancel the meeting", "отмени встречу"]:
+            self.assertNotIn("send", guard.detect(t), t)
+        for t in ["отправь сообщение Пете", "напиши сообщение в слак", "напиши в чат",
+                  "отправь письмо", "добавь событие в календарь", "назначь встречу",
+                  "прими приглашение", "send the email", "post it to slack"]:
+            self.assertIn("send", guard.detect(t), t)
+        send = ("mcp__claude_ai_Gmail__send_message", {"to": "a@b", "body": "hi"})
+        self.assertIsNotNone(run_hook(*send, [human("напиши сообщение коммита")]))
+
+    def test_send_tools_by_name_on_any_server(self):
+        for tool in ["mcp__claude_ai_Microsoft_365__outlook_email_send", "mcp__ms365__send-mail",
+                     "mcp__microsoft365__mail_send", "mcp__google_workspace__send_gmail_message",
+                     "mcp__workspace__gmail_send", "mcp__gsuite__send_email",
+                     "mcp__resend__send-email", "mcp__google-workspace__create_event",
+                     "mcp__slack__slack_canvas_create", "mcp__claude_ai_Zoom__create_meeting",
+                     "mcp__signal__send_message"]:
+            self.assertEqual(self.kinds(tool, {}), ["send"], tool)
+        for tool in ["mcp__signal-analyzer__post_result", "mcp__slack__slack_get_post",
+                     "mcp__slack__slack_list_reactions", "mcp__workspace__create_draft",
+                     "mcp__workspace__list_events", "mcp__zoom__list_meetings",
+                     "mcp__unity__create_asset"]:
+            self.assertEqual(self.kinds(tool, {}), [], tool)
+        self.assertEqual(self.kinds("mcp__clickup__clickup_send_chat_message", {}), ["comment"])
+
+    def test_powershell_start_process_and_opaque_forms(self):
+        ps = lambda c: self.kinds("PowerShell", {"command": c})
+        for c in ["Start-Process git -ArgumentList 'push','origin','task/1'",
+                  "Start-Process git -ArgumentList @('push')",
+                  "Start-Process -FilePath 'git.exe' -ArgumentList 'push origin'",
+                  "& (Get-Command git) push"]:
+            self.assertIn("push", ps(c), c)
+        for c in ["Invoke-Expression ('git ' + 'push')", "iex $cmd", "pwsh -enc ZwBpAHQA",
+                  "powershell -EncodedCommand ZwBpAHQA", "& ($tool) push"]:
+            self.assertIn("opaque", ps(c), c)
+        for c in ["Start-Process git -ArgumentList 'status'", "& (Join-Path $x b.ps1) -Release",
+                  'Invoke-Expression "git status"', "pwsh -File build.ps1"]:
+            self.assertEqual(ps(c), [], c)
+        self.assertEqual(self.kinds(*bash("pwsh -enc ZwBpAHQA")), ["opaque"])
+        self.assertEqual(self.kinds(*bash('pwsh -c "git push -u origin task/1"')), ["push"])
+
+    def test_powershell_tamper_follows_the_cwd_and_copies(self):
+        for c in ["cd ~/.claude; 'x' > settings.json",
+                  "Set-Location ~/.claude; Set-Content settings.json x",
+                  "Copy-Item x/settings.json ~/.claude/",
+                  "Copy-Item -Path x\\settings.json -Destination $HOME\\.claude\\",
+                  "Copy-Item -Recurse evil/ ~/.claude/",
+                  '[IO.File]::WriteAllText("$HOME/.claude/settings.json", \'x\')',
+                  "$p = '~/.claude/settings.json'; [System.IO.File]::WriteAllText($p, 'x')",
+                  "Set-Location $env:NOPE; Set-Content settings.json x"]:
+            self.assertTrue(self.tampered("PowerShell", {"command": c}), c)
+        for c in ["Set-Location /tmp; Set-Content settings.json x", "Copy-Item a b",
+                  '[IO.File]::ReadAllText("$HOME/.claude/settings.json")',
+                  "[IO.File]::WriteAllText('/tmp/x.txt', 'y')"]:
+            self.assertFalse(self.tampered("PowerShell", {"command": c}), c)
+
+    def test_bash_directory_copies_and_unknown_cd(self):
+        for c in ["cp -r x/ ~/.claude/", "rsync -a evil/ ~/.claude/",
+                  'cd "$UNSET_VAR" && echo x > settings.json']:
+            self.assertTrue(self.tampered("Bash", {"command": c}), c)
+        for c in ["cp -r dist/ /tmp/out/", "rsync -a evil ~/.claude/", 'cd "$X" && echo x > out.txt']:
+            self.assertFalse(self.tampered("Bash", {"command": c}), c)
+
+    def test_git_dash_c_only_before_a_push(self):
+        # remote.* also runs programs (remote.<r>.uploadpack): opaque whatever the subcommand
+        self.assertEqual(self.kinds(*bash("git -c remote.origin.url=x fetch")), ["opaque"])
+        self.assertEqual(self.kinds(*bash("git -c branch.autosetupmerge=false switch -c x")), [])
+        self.assertEqual(self.kinds(*bash("git -c remote.origin.push=HEAD:main push")), ["opaque"])
+        self.assertIn("opaque", self.kinds(*bash("git -c url.x.insteadOf=y myalias")))
+
+    def test_status_is_bound_to_the_named_tasks(self):
+        upd = lambda tid: ("mcp__clickup__clickup_update_task", {"task_id": tid, "status": "review"})
+        self.assertEqual(guard.status_refs("переведи 86abc1 в ревью, потом PR #45"), {"86abc1"})
+        self.assertEqual(guard.status_refs("переведи в ревью. см https://x.com/a и https://x.com/b"),
+                         set())
+        self.assertEqual(guard.status_refs("переведи https://github.com/o/r/pull/3 в ревью"), set())
+        pr = [human("переведи 86abc1 в ревью, потом PR #45")]
+        self.assertIsNone(run_hook(*upd("86abc1"), pr))
+        self.assertIn("named", run_hook(*upd("45"), pr))
+        self.assertIsNotNone(run_hook(*upd("86zzz9"), flat(pr, call(*upd("86abc1")))))
+        docs = [human("переведи в ревью. см https://x.com/a и https://x.com/b")]
+        self.assertIsNone(run_hook(*upd("86abc1"), docs))  # no task named: one change
+        self.assertIsNotNone(run_hook(*upd("86abc2"), flat(docs, call(*upd("86abc1")))))
+        link = [human("переведи https://app.clickup.com/t/86abc1 в ревью")]
+        self.assertIsNone(run_hook(*upd("86abc1"), link))
+        gh = [human("закрой задачу #12")]
+        self.assertIsNone(run_hook(*bash("gh issue close 12"), gh))
+        self.assertIsNotNone(run_hook(*bash("gh issue close 13"), gh))
+
+    def test_queued_status_command_adds_tasks(self):
+        upd = lambda tid: ("mcp__clickup__clickup_update_task", {"task_id": tid, "status": "review"})
+        first = flat(human("переведи 86abc1 и 86abc2 и 86abc3 в ревью"), call(*upd("86abc1")),
+                     queued("и ещё переведи 86abc4 в ревью"), call(*upd("86abc4")))
+        self.assertIsNone(run_hook(*upd("86abc2"), first))
+        self.assertIsNone(run_hook(*upd("86abc3"), flat(first, call(*upd("86abc2")))))
+        self.assertIsNotNone(run_hook(*upd("86abc4"), first))  # done already
+
+    def test_pr_body_forms(self):
+        sess = "s-prbody2"
+        run = session_run(sess, "t-pr2")
+        order = [human("открой PR")]
+        body_file = os.path.join(run, "PR-BODY.md")
+        for cmd in [f'gh pr create --body "$(cat {body_file})"',
+                    f"cd {run} && gh pr create --body-file PR-BODY.md",
+                    f"gh api repos/o/r/pulls -f title=x -F body=@{body_file}"]:
+            self.assertIsNone(run_hook(*bash(cmd), order, session=sess), cmd)
+        self.assertIn("differs", run_hook(*bash("gh api repos/o/r/pulls -f title=x -f body=@x"),
+                                          order, session=sess))
+
+    def test_quotes_and_english(self):
+        self.assertNotIn("push", guard.detect("задача говорит 'запушь'"))
+        self.assertIn("push", guard.detect("don't forget: push it"))
+        self.assertNotIn("history", guard.detect("delete branch protection rule"))
+        self.assertIn("force", guard.detect("delete the branch on origin"))
+        self.assertIn("push", guard.detect("push these please"))
+        for t in ["обнови описание PR", "update the PR description"]:
+            self.assertIn("tracker", guard.detect(t), t)
+
+
+def pushed_repo(*config):
+    """A clone of a bare remote, on task/x, with `config` written to its .git/config — what a
+    plain `git push` there would update is decided by those settings."""
+    bare = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+    path = tempfile.mkdtemp()
+    git = ["git", "-C", path, "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "clone", "-q", bare, path], check=True, capture_output=True)
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    subprocess.run(git + ["push", "-q", "origin", "HEAD:main"], check=True, capture_output=True)
+    subprocess.run(git + ["switch", "-q", "-c", "task/x"], check=True)
+    for setting in config:
+        key, value = setting.split("=", 1)
+        subprocess.run(git + ["config", "--add", key, value], check=True)
+    return path
+
+
+class Release201ClosureTest(unittest.TestCase):
+    """Ways around a grant that 2.0.1 closes: git settings written as files, one-off settings and
+    commands git runs for itself, PowerShell call forms, where a push goes by the repository's
+    own settings, branch deletes, GraphQL, the approved PR body and a silent --post."""
+
+    kinds = Release201Test.kinds
+    tampered = Release201Test.tampered
+
+    def test_git_settings_written_as_files(self):
+        home = os.path.expanduser("~")
+        writes = [("Write", {"file_path": f"{TASKREPO}/.git/config", "content": "[alias]\n p = push\n"}),
+                  ("Edit", {"file_path": f"{TASKREPO}/.git/config", "old_string": "[core]",
+                            "new_string": "[alias]\n p = push\n[core]"}),
+                  ("Write", {"file_path": f"{home}/.gitconfig", "content": "x"}),
+                  ("Write", {"file_path": f"{TASKREPO}/.git/hooks/pre-push", "content": "x"}),
+                  ("Write", {"file_path": f"{TASKREPO}/.git/info/attributes", "content": "x"}),
+                  ("Write", {"file_path": f"{TASKREPO}/.git/worktrees/w/config.worktree",
+                             "content": "x"}),
+                  ("Write", {"file_path": f"{TASKREPO}/.gitattributes",
+                             "content": "*.c filter=evil\n"}),
+                  ("Edit", {"file_path": f"{TASKREPO}/.gitattributes", "old_string": "x",
+                            "new_string": "*.c diff=evil"})]
+        for tool, inp in writes:
+            self.assertTrue(self.tampered(tool, inp), (tool, inp))
+        for cmd in ["echo '[alias] p = push' >> .git/config", "tee -a .git/config < x",
+                    "cp evil .git/hooks/pre-commit", "cp evil .git/hooks/", "echo x > ~/.gitconfig",
+                    'echo x > "$XDG_CONFIG_HOME/git/config"', "echo x > ~/.config/git/config",
+                    "echo x > .git/info/attributes", "echo '* filter=x' >> .gitattributes",
+                    "cp evil .gitattributes", "sed -i '' 's/a/b/' .git/config",
+                    "git remote add up git@evil:x.git", "git config core.editor 'sh -c x'",
+                    "git config core.fsmonitor x"]:
+            self.assertTrue(self.tampered("Bash", {"command": cmd}), cmd)
+        for cmd in ["Set-Content .git/config x", "Add-Content .git\\hooks\\pre-push x",
+                    "'x' | Out-File $HOME/.gitconfig", "Add-Content .gitattributes '* diff=x'"]:
+            self.assertTrue(self.tampered("PowerShell", {"command": cmd}), cmd)
+        for tool, inp in [("Write", {"file_path": f"{TASKREPO}/.gitattributes",
+                                     "content": "*.png binary\n*.sh text eol=lf\n"}),
+                          ("Write", {"file_path": f"{TASKREPO}/src/config", "content": "x"}),
+                          ("Write", {"file_path": f"{TASKREPO}/hooks/pre-push.md", "content": "x"})]:
+            self.assertFalse(self.tampered(tool, inp), (tool, inp))
+        for cmd in ["cat .git/config", "echo '*.png binary' >> .gitattributes", "git remote -v",
+                    "git config --get core.editor", "echo x > notes/config.md"]:
+            self.assertFalse(self.tampered("Bash", {"command": cmd}), cmd)
+
+    def test_one_off_settings_and_environment(self):
+        for cmd in ["git -c core.editor='sh -c x' commit", "git -c core.sshCommand=x fetch",
+                    "git -c core.fsmonitor=x status", "git -c core.hooksPath=/tmp/h commit -m x",
+                    "git -c sequence.editor=x rebase -i HEAD~2", "git -c alias.st=push st",
+                    "git -c remote.origin.uploadpack=x fetch", "git -c url.a.insteadOf=b fetch",
+                    "git --config-env=core.editor=ED commit",
+                    "GIT_CONFIG_PARAMETERS=\"'alias.st=push'\" git st",
+                    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status",
+                    "GIT_SSH_COMMAND='sh -c x' git fetch", "GIT_EDITOR='git push;' git commit",
+                    "export GIT_SSH_COMMAND='x'; git fetch", "env GIT_CONFIG_GLOBAL=/x git log"]:
+            self.assertIn("opaque", self.kinds("Bash", {"command": cmd}), cmd)
+        for cmd in ["git -c user.name=t commit -m x", "GIT_CONFIG_GLOBAL=/dev/null git status",
+                    "GIT_PAGER=cat git log", "GIT_INDEX_FILE=/r/.git/t.index git add a",
+                    "git -c color.ui=never log"]:
+            self.assertNotIn("opaque", self.kinds("Bash", {"command": cmd}), cmd)
+
+    def test_commands_git_runs_for_itself(self):
+        k = lambda c: self.kinds("Bash", {"command": c})
+        for cmd in ["git rebase -x 'git push' main", "git rebase --exec='git push' HEAD~2",
+                    "git bisect run git commit -am x", "git submodule foreach 'git push'",
+                    "git difftool -x 'gh pr merge 3'", "git fetch --upload-pack='git push;x' ../r",
+                    "echo main | xargs git push origin", "find . -exec git commit -m y \;",
+                    "parallel git push ::: a b"]:
+            self.assertIn("opaque", k(cmd), cmd)
+        self.assertEqual(k("git rebase -x 'npm test' HEAD~2"), ["commit"])  # the rebase's own
+        for cmd in ["git bisect run make test", "git submodule foreach 'git status'",
+                    "git difftool -x 'diff -u'", "find . -name x -exec git log \;",
+                    "xargs -n1 git status"]:
+            self.assertEqual(k(cmd), [], cmd)
+        # a commit command does not reach a push the commit's helpers would make
+        self.assertIsNotNone(run_hook(*bash("git rebase -x 'git push' HEAD~2"),
+                                      [human("закоммить")]))
+        self.assertIsNotNone(run_hook(*bash("git -c core.editor='sh -c x' commit"),
+                                      [human("закоммить")]))
+
+    def test_powershell_call_forms(self):
+        ps = lambda c: self.kinds("PowerShell", {"command": c})
+        for c in ['&("git") push', "&'git' push", '&"git" push', '.( "git" ) push',
+                  "& (Get-Command git) push"]:
+            self.assertEqual(ps(c), ["push"], c)
+        for c in ["& \"gi$('t')\" push", "& \"gi$('t')\" st", '&("gi"+"t") commit',
+                  '. ("g" + "it") push', "& ($tool) push", "& $g -C x st", ". $script"]:
+            self.assertIn("opaque", ps(c), c)
+        for c in ["& (Join-Path $x b.ps1) -Release", ". .\\build.ps1", "& $python -m pytest",
+                  '& "$root\\tools\\build.ps1"', "&'dotnet' test", "git status && echo ok"]:
+            self.assertEqual(ps(c), [], c)
+
+    def test_push_destination_from_the_repository_settings(self):
+        k = lambda c, cwd: self.kinds("Bash", {"command": c}, cwd)
+        upstream = pushed_repo("branch.task/x.merge=refs/heads/main", "push.default=upstream")
+        for cmd in ["git push", "git push origin", "git push -u origin"]:
+            self.assertEqual(k(cmd, upstream), ["force"], cmd)
+        self.assertEqual(k("git push origin task/x", upstream), ["push"])  # named: same name
+        mapped = pushed_repo("remote.origin.push=refs/heads/task/x:refs/heads/main")
+        for cmd in ["git push", "git push origin", "git push origin task/x", "git push origin HEAD"]:
+            self.assertEqual(k(cmd, mapped), ["force"], cmd)
+        self.assertEqual(k("git push origin task/x:task/x", mapped), ["push"])
+        self.assertEqual(k("git push", pushed_repo("push.default=matching")), ["force"])
+        self.assertEqual(k("git push", pushed_repo("remote.origin.push=refs/heads/*:refs/heads/*")),
+                         ["force"])  # every branch, main among them
+        simple = pushed_repo("branch.task/x.merge=refs/heads/main")  # git refuses; still force
+        self.assertEqual(k("git push", simple), ["force"])
+        own = pushed_repo("branch.task/x.merge=refs/heads/task/x", "push.default=upstream")
+        self.assertEqual(k("git push", own), ["push"])
+        self.assertEqual(k("git push", pushed_repo()), ["push"])
+        self.assertIsNotNone(run_hook(*bash("git push"), [human("запушь")], cwd=upstream))
+        self.assertIsNone(run_hook(*bash("git push"), [human("запушь")], cwd=own))
+
+    def test_branch_delete_is_its_own_grant(self):
+        order = [human("удали ветку task/1-x")]
+        for cmd in ["git branch -d task/1-x", "git branch -D task/1-x"]:
+            self.assertIsNone(run_hook(*bash(cmd), order, cwd=COMMITREPO), cmd)
+        for cmd in ["git reset --hard HEAD~1", "git worktree remove --force ../wt", "git clean -fd",
+                    "git push origin --delete task/1-x"]:
+            self.assertIsNotNone(run_hook(*bash(cmd), order, cwd=COMMITREPO), cmd)
+        self.assertIsNone(run_hook(*bash("git branch -D x"), [human("delete the branch")]))
+        tag = [human("?"), answer("?", [("Удалить ветку [delete-branch]", None)],
+                                  "Удалить ветку [delete-branch]")]
+        self.assertIsNone(run_hook(*bash("git branch -D x"), tag))
+        self.assertIsNotNone(run_hook(*bash("git reset --hard HEAD~1"), tag, cwd=COMMITREPO))
+        latest = [human("pull the latest")]
+        for cmd in ["git reset --hard origin/main", "git pull", "git branch -D x"]:
+            self.assertIsNotNone(run_hook(*bash(cmd), latest, cwd=COMMITREPO), cmd)
+        once = flat(order, call(*bash("git branch -D task/1-x")))
+        self.assertIsNotNone(run_hook(*bash("git branch -D task/2-y"), once))
+
+    def test_graphql_mutations(self):
+        q = lambda body, rest="": self.kinds("Bash", {"command": "gh api graphql " + rest +
+                                                      " -f query='" + body + "'"})
+        self.assertEqual(q("mutation{createPullRequest(input:{}){clientMutationId}}"), ["pr"])
+        self.assertEqual(q("mutation{mergePullRequest(input:{}){clientMutationId}}"), ["merge"])
+        self.assertEqual(q("mutation{enablePullRequestAutoMerge(input:{}){x}}"), ["merge"])
+        self.assertEqual(q('mutation{updatePullRequest(input:{title:"x"}){x}}'), ["tracker"])
+        self.assertEqual(q("mutation{closePullRequest(input:{}){x}}"), ["tracker"])
+        self.assertEqual(q("mutation{updateRepository(input:{}){x}}"), ["repo-admin-settings"])
+        self.assertEqual(q("mutation{deleteRef(input:{}){x}}"), ["force"])
+        self.assertEqual(q("mutation{createIssue(input:{}){x}}"), ["create-task"])
+        self.assertEqual(q("mutation{addStar(input:{}){x}}"), ["tracker"])
+        self.assertEqual(q("mutation{a: addComment(input:{}){x} b: mergePullRequest(input:{}){x}}"),
+                         ["comment", "merge"])
+        self.assertEqual(q("query{repository(owner:\"o\",name:\"r\"){pullRequests{totalCount}}}"), [])
+        self.assertEqual(q("{ viewer { login } }"), [])
+        sess = "s-graphql"
+        run = session_run(sess, "t-graphql")
+        body = os.path.join(run, "PR-BODY.md")
+        create = ("gh api graphql -F body=@{} -f query='mutation($body:String!){{createPullRequest("
+                  "input:{{body:$body}}){{clientMutationId}}}}'")
+        order = [human("открой PR")]
+        self.assertIsNone(run_hook(*bash(create.format(body)), order, session=sess))
+        self.assertIn("approved", run_hook(*bash(create.format("/etc/hosts")), order, session=sess))
+        inline = "gh api graphql -f query='mutation{createPullRequest(input:{body:\"x\"}){x}}'"
+        self.assertIn("cannot be checked", run_hook(*bash(inline), order, session=sess))
+        self.assertIn("[merge]", run_hook(*bash(
+            "gh api graphql -f query='mutation{mergePullRequest(input:{}){x}}'"), order))
+        self.assertIn("differs", run_hook(*bash(
+            "gh api graphql -F body=x -f query='mutation($body:String!){updatePullRequest(input:"
+            "{body:$body}){x}}'"), [human("обнови описание PR")], session=sess))
+
+    def test_pr_body_matches_the_approved_hash(self):
+        order = [human("открой PR")]
+        sess = "s-prhash"
+        run = session_run(sess, "t-prhash", approved=False)
+        body = os.path.join(run, "PR-BODY.md")
+        create = bash(f"gh pr create --base main --body-file {body}")
+        self.assertIn("pr_body_sha256", run_hook(*create, order, session=sess))
+        run = session_run(sess, "t-prhash")
+        self.assertIsNone(run_hook(*create, order, session=sess))
+        with open(body, "a") as f:
+            f.write("one more line the user never saw\n")
+        self.assertIn("changed since the user approved", run_hook(*create, order, session=sess))
+        run = session_run(sess, "t-prhash")
+        # the file the guard checked must be the one the PR gets: no write in the same command
+        for cmd in [f"echo x > {body} && gh pr create --body-file {body}",
+                    f"cd {run} && printf x | tee PR-BODY.md && gh pr create --body-file PR-BODY.md",
+                    f"cp /tmp/x {body}; gh pr create --body-file {body}",
+                    f"sed -i '' s/a/b/ {body} && gh pr create --body-file {body}",
+                    f"python3 -c 'open(\"{body}\",\"w\")' && gh pr create --body-file {body}",
+                    f"echo 'pr_body_sha256: 0' >> {run}/RUN.md && gh pr create --body-file {body}",
+                    f"gh pr edit 3 --body-file {body} && echo x > {body}"]:
+            out = run_hook(*bash(cmd), [human("открой PR и обнови описание PR")], session=sess)
+            self.assertIn("same command", out or "", cmd)
+        self.assertIn("differs", run_hook(*bash(f"gh pr create --body-file {body} --body x"),
+                                          order, session=sess))  # the other text counts too
+        for cmd in [f"cat {body} && gh pr create --body-file {body}",
+                    f"shasum -a 256 {body}; gh pr create --body-file {body}"]:
+            self.assertIsNone(run_hook(*bash(cmd), order, session=sess), cmd)
+        ps = ("PowerShell", {"command": f"Set-Content {body} x; gh pr create --body-file {body}"})
+        self.assertIn("same command", run_hook(*ps, order, session=sess))
+        ps = ("PowerShell", {"command": f"Get-Content {body}; gh pr create --body-file {body}"})
+        self.assertIsNone(run_hook(*ps, order, session=sess))
+        # writing the body alone is the normal way to prepare it
+        self.assertIsNone(run_hook(*bash(f"echo x > {body}"), order, session=sess))
+
+    def test_post_never_denies(self):
+        for payload in ["not json but git commit", "[1, 2]", '{"tool_name": "Bash", "tool_input": '
+                        '{"command": "echo > RUN.md"}, "session_id": 5, "cwd": 7}',
+                        '{"tool_name": "Write", "tool_input": {"file_path": 3}}']:
+            out = subprocess.run([sys.executable, os.path.join(HERE, "guard.py"), "--post"],
+                                 input=payload, capture_output=True, text=True,
+                                 env=dict(os.environ, HOME=HOME))
+            self.assertEqual((out.returncode, out.stdout), (0, ""), payload)
+
+
+class Release201Round2Test(unittest.TestCase):
+    """The second closure round of 2.0.1: GraphQL the guard cannot read, the PR body written in
+    the PR's own command, PowerShell environment and script blocks, paths without case, gh
+    aliases, filter-branch, git --exec-path, and benign pagers in `-c`."""
+
+    kinds = Release201Test.kinds
+    tampered = Release201Test.tampered
+
+    def all_kinds(self, tool, inp, cwd=None):
+        return sorted({g[0] for g in guard.classify(tool, inp, cwd or TASKREPO)})
+
+    def test_graphql_the_guard_cannot_read_is_opaque(self):
+        merge = "mutation { mergePullRequest(input:{}) { x } }"
+        for cmd in [f"gh api graphql -fquery='{merge}'", f"gh api graphql --raw-field='query={merge}'",
+                    f"gh api graphql --field=query='{merge}'", f"gh api -f query='{merge}' graphql",
+                    f"gh api /graphql -f query='{merge}'",
+                    f"gh api https://api.github.com/graphql -f query='{merge}'",
+                    "curl -X POST https://api.github.com/graphql -d "
+                    "'{\"query\":\"mutation { mergePullRequest(input:{}) { x } }\"}'"]:
+            self.assertEqual(self.kinds("Bash", {"command": cmd}), ["merge"], cmd)
+        for cmd in ["gh api graphql -Fquery=@missing.graphql", "gh api graphql -f query=\"$Q\"",
+                    "gh api graphql -f query=\"$(cat q.graphql)\"",
+                    "gh api graphql -f query=\"$(< q.graphql)\"", "gh api graphql -F query=@-",
+                    "gh api graphql --input missing.json", "gh api graphql",
+                    "gh api graphql -f query='mutation { $M }'",
+                    "curl https://api.github.com/graphql -d \"$BODY\"",
+                    "curl https://api.github.com/graphql -d @missing.json"]:
+            self.assertEqual(self.kinds("Bash", {"command": cmd}), ["opaque"], cmd)
+        self.assertEqual(self.kinds("PowerShell", {"command": "gh api graphql -f query=$q"}),
+                         ["opaque"])
+        for cmd in ["gh api graphql -f query='query { viewer { login } }'",
+                    "gh api graphql -f query='query($o:String!){ repository(owner:$o, name:\"r\")"
+                    "{ id } }' -f o=x",
+                    "curl https://api.github.com/graphql --json '{\"query\":\"{viewer{login}}\"}'"]:
+            self.assertEqual(self.kinds("Bash", {"command": cmd}), [], cmd)
+        self.assertEqual(self.kinds("PowerShell", {"command": "gh api graphql -f "
+                                                              "query='query { viewer { login } }'"}), [])
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "q.json"), "w") as f:
+                json.dump({"query": "mutation{mergePullRequest(input:{}){x}}"}, f)
+            with open(os.path.join(d, "q.graphql"), "w") as f:
+                f.write("mutation{createRef(input:{}){x}}")
+            self.assertEqual(self.kinds("Bash", {"command": "gh api graphql --input q.json"}, d),
+                             ["merge"])
+            self.assertEqual(self.kinds("Bash", {"command": "gh api graphql -F query=@q.graphql"},
+                                        d), ["force"])
+            self.assertEqual(self.kinds("Bash", {"command": "curl https://api.github.com/graphql "
+                                                            "-d @q.json"}, d), ["merge"])
+        # REST fields in the joined spelling still make a POST
+        self.assertIn("pr-body", self.all_kinds("Bash", {
+            "command": "gh api repos/o/r/pulls -ftitle=x -fbody=evil -fhead=a -fbase=main"}))
+        self.assertIn("pr-body", self.all_kinds("Bash", {
+            "command": "gh api graphql -F i[body]=EVIL -f query='mutation($i:UpdatePullRequestInput!)"
+                       "{updatePullRequest(input:$i){x}}'"}))
+
+    def test_pr_write_in_a_command_of_its_own(self):
+        sess = "s-r2-body"
+        run = session_run(sess, "t-r2-body")
+        pb = os.path.join(run, "PR-BODY.md")
+        order = [human("открой PR")]
+        self.assertIsNone(run_hook(*bash(f"gh pr create -t t --body-file {pb}"), order,
+                                   session=sess))
+        self.assertIsNone(run_hook(*bash(f"cd {run} && gh pr create -t t -F PR-BODY.md 2>&1 | "
+                                         "tail -3"), order, session=sess))
+        for cmd in [f"P={pb}; echo evil > $P; gh pr create -t t -F {pb}",
+                    f"echo e > {run}/PR-BODY.{{md,x}}; gh pr create -t t -F {pb}",
+                    f"echo e > {run}/pr-body.md; gh pr create -t t -F {pb}",
+                    f"python3 -c 'pass'; gh pr create -t t -F {pb}",
+                    f"tar -C {run} -xf e.tar; gh pr create -t t -F {pb}",
+                    f"f(){{ cp a \"$1\"; }}; f x; gh pr create -t t -F {pb}"]:
+            self.assertIn("same command", run_hook(*bash(cmd), order, session=sess) or "", cmd)
+        self.assertIn("same command", run_hook(
+            "PowerShell", {"command": f"$P='{pb}'; Set-Content $P evil; gh pr create -t t -F {pb}"},
+            order, session=sess) or "")
+        self.assertIsNone(run_hook("PowerShell", {"command": f"gh pr create -t t -F {pb}"}, order,
+                                   session=sess))
+        self.assertFalse(guard.body_written_shell(
+            f"git push -u origin \"$(git branch --show-current)\" && gh pr create -F {pb}"))
+
+    def test_powershell_environment_and_script_blocks(self):
+        for cmd in ["$env:GIT_CONFIG_PARAMETERS=\"'alias.p=push'\"; git p",
+                    "$env:GIT_SSH_COMMAND='x'; git fetch", "Set-Item env:GIT_SSH_COMMAND x; git fetch",
+                    "Set-Item -Path Env:GIT_DIR -Value /x; git log",
+                    "[Environment]::SetEnvironmentVariable('GIT_SSH_COMMAND','x'); git fetch",
+                    "[Environment]::SetEnvironmentVariable($n,'x'); git fetch",
+                    "${env:GIT_EDITOR} = $e; git commit",
+                    "&(\"{0}{1}\" -f 'gi','t') push", "&(Get-Command gi*) push", "git @args"]:
+            self.assertIn("opaque", self.kinds("PowerShell", {"command": cmd}), cmd)
+        for cmd in ["$env:GIT_PAGER='cat'; git log", "$env:GIT_CONFIG_GLOBAL='/dev/null'; git status",
+                    "$env:FOO='x'; git status", "$h = @{a=1}; git status",
+                    "& (Get-Command python) x"]:
+            self.assertEqual(self.kinds("PowerShell", {"command": cmd}), [], cmd)
+        for cmd in ["&{git push origin task/1}", "& {git push origin task/1}",
+                    ".{git push origin task/1}", "@(git push origin task/1)",
+                    "[void](git push origin task/1)", "(git push origin task/1)",
+                    "Write-Output \"$(git push origin task/1)\"", "$x = $(git push origin task/1)",
+                    "1..2 | ForEach-Object { git push origin task/1 }",
+                    "Start-Process git -ArgumentList @('push','origin','task/1')"]:
+            self.assertIn("push", self.kinds("PowerShell", {"command": cmd}), cmd)
+
+    def test_paths_compared_without_case(self):
+        home = os.path.expanduser("~")
+        for cmd in ["echo x > .GIT/config", "echo x > .git/CONFIG", "echo x > .Git/hooks/pre-push",
+                    "echo x > .git/HOOKS/pre-push", "echo x > ~/.GITCONFIG",
+                    "echo x > ~/.CLAUDE/settings.json", "ln -s .git hidden; echo x > hidden/config",
+                    "ln -sf ~/.claude/plugins x", "echo x >> ~/.config/gh/config.yml"]:
+            self.assertTrue(self.tampered("Bash", {"command": cmd}), cmd)
+        for tool, inp in [("Write", {"file_path": f"{TASKREPO}/.GIT/config", "content": "x"}),
+                          ("Write", {"file_path": f"{TASKREPO}/.git/Config", "content": "x"}),
+                          ("Write", {"file_path": f"{home}/.config/git/attributes",
+                                     "content": "* filter=x"})]:
+            self.assertTrue(self.tampered(tool, inp), (tool, inp))
+        self.assertTrue(self.tampered("PowerShell", {
+            "command": "New-Item -ItemType SymbolicLink -Path h -Target .git; Set-Content h/config x"}))
+        for cmd in ["ln -s ../lib vendor", "echo '*.bin filter=lfs diff=lfs merge=lfs -text' >> "
+                    ".gitattributes", "echo '*.md merge=union' >> .gitattributes"]:
+            self.assertFalse(self.tampered("Bash", {"command": cmd}), cmd)
+
+    def test_gh_aliases(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "config.yml"), "w") as f:
+                f.write("version: 1\naliases:\n    co: pr checkout\n    p: pr merge\n"
+                        "    m: \"pr merge $1 --squash\"\n    s: '!git push origin HEAD:main'\n"
+                        "    b: |\n        multi\nhttp_unix_socket:\n")
+            old = os.environ.get("GH_CONFIG_DIR")
+            os.environ["GH_CONFIG_DIR"] = d
+            try:
+                k = lambda c: self.kinds("Bash", {"command": c})
+                self.assertEqual(k("gh p 1"), ["merge"])
+                self.assertEqual(k("gh m 3"), ["merge"])
+                self.assertEqual(k("gh s"), ["force"])
+                self.assertEqual(k("gh b"), ["opaque"])
+                self.assertEqual(k("gh co 3"), [])
+                self.assertTrue(self.tampered("Bash", {"command": f"echo x >> {d}/config.yml"}))
+            finally:
+                if old is None:
+                    os.environ.pop("GH_CONFIG_DIR")
+                else:
+                    os.environ["GH_CONFIG_DIR"] = old
+        k = lambda c: self.kinds("Bash", {"command": c})
+        for cmd in ["gh alias set p 'pr merge'", "gh alias set --shell x 'git push'",
+                    "gh alias import a.yml"]:
+            self.assertEqual(k(cmd), ["tamper"], cmd)
+        self.assertEqual(k("gh alias set v 'pr view'"), [])
+
+    def test_git_runs_programs_and_benign_pagers(self):
+        k = lambda c: self.kinds("Bash", {"command": c})
+        for cmd in ["git filter-branch --tree-filter 'git push' HEAD",
+                    "git filter-branch --index-filter 'git push' HEAD",
+                    "git filter-branch --env-filter='gh pr merge 1' HEAD",
+                    "git filter-repo --commit-callback 'x'", "git --exec-path=/tmp/evil push"]:
+            self.assertIn("opaque", k(cmd), cmd)
+        self.assertEqual(k("git filter-branch --msg-filter 'cat' HEAD"), ["history"])
+        self.assertEqual(k("git --exec-path"), [])
+        for cmd in ["git -c core.pager=cat log", "git -c pager.log=false log",
+                    "git -c core.editor=true commit -m x"]:
+            self.assertNotIn("opaque", k(cmd), cmd)
+        self.assertEqual(k("git -c core.editor=true rebase --continue"),
+                         k("GIT_EDITOR=true git rebase --continue"))
+        self.assertIn("opaque", k("git -c core.pager='sh -c x' log"))
+
+
+class Release201Round3Test(unittest.TestCase):
+    """The third closure round of 2.0.1: Windows environment names without case, git that writes
+    files at a path an option or a patch names, tar extracting into git's settings, and gh
+    reading its config from a GH_CONFIG_DIR / XDG_CONFIG_HOME set in the same command."""
+
+    kinds = Release201Test.kinds
+    tampered = Release201Test.tampered
+
+    def test_windows_environment_names_without_case(self):
+        ps = lambda c: self.kinds("PowerShell", {"command": c})
+        for cmd in ["$env:Git_Config_Parameters=\"'alias.p=push'\"; git p",
+                    "$env:git_ssh_command='x'; git fetch", "Set-Item env:git_editor x; git commit",
+                    "Set-Item -Path Env:Git_Dir -Value /x; git log",
+                    "[Environment]::SetEnvironmentVariable('Git_Ssh_Command','x'); git fetch",
+                    "${env:git_config_count} = 1; git status",
+                    "cmd /c \"set git_ssh_command=x && git fetch\"",
+                    "cmd /c \"set /p GIT_DIR=<f && git log\""]:
+            self.assertIn("opaque", ps(cmd), cmd)
+        for cmd in ["cmd /c \"set Git_Ssh_Command=x && git fetch\"",
+                    "cmd.exe /c \"set GIT_CONFIG_PARAMETERS='alias.p=push'&& git p\""]:
+            self.assertIn("opaque", self.kinds("Bash", {"command": cmd}), cmd)
+        for cmd in ["$env:git_pager='cat'; git log", "cmd /c \"set GIT_PAGER=cat && git log\"",
+                    "cmd /c \"set FOO=x && git status\""]:
+            self.assertEqual(ps(cmd), [], cmd)
+        self.assertEqual(self.kinds("Bash", {"command": "cmd /c \"git commit -m x\""}), ["commit"])
+        # HOME and XDG_CONFIG_HOME move git's global config
+        for cmd in ["HOME=/tmp/x git p", "XDG_CONFIG_HOME=/tmp/x git p",
+                    "export XDG_CONFIG_HOME=/tmp/x; git status"]:
+            self.assertIn("opaque", self.kinds("Bash", {"command": cmd}), cmd)
+        self.assertIn("opaque", ps("$env:UserProfile='C:/x'; git status"))
+
+    def repo_with_config(self):
+        """A repo with a tracked file named `config`, which checkout-index --prefix=.git/ would
+        write over .git/config."""
+        path = repo_with_commit()
+        git = ["git", "-C", path, "-c", "user.name=t", "-c", "user.email=t@t"]
+        with open(os.path.join(path, "config"), "w") as f:
+            f.write("[alias]\n\tst = push\n")
+        subprocess.run(git + ["add", "config"], check=True)
+        subprocess.run(git + ["commit", "-qm", "config"], check=True)
+        return path
+
+    def test_git_writes_files_at_a_path_an_option_names(self):
+        r = self.repo_with_config()
+        t = lambda c, tool="Bash": self.tampered(tool, {"command": c}, r)
+        for cmd in ["git checkout-index -a --prefix=.git/hooks/",
+                    "git checkout-index --prefix=.git/ -a", "git checkout-index --prefix .git/ config",
+                    "git -C . checkout-index -a --prefix=.git/",
+                    "git checkout-index --stdin --prefix=.git/ < list",
+                    "git archive -o .git/hooks/pre-commit HEAD",
+                    "git archive --output=.git/config HEAD", "git diff --output=.git/config",
+                    "git bundle create .git/hooks/pre-push HEAD",
+                    "git format-patch -o .git/hooks HEAD~1",
+                    "git archive --prefix=.git/hooks/ HEAD | tar -x",
+                    "git archive --prefix=.git/ HEAD | tar -xf -",
+                    "git archive HEAD | tar -x -C .git/hooks", "tar -xzf x.tgz -C .git/hooks",
+                    "git show HEAD:config > .git/config",
+                    f"git checkout-index -a --prefix={guard.CONFIG_DIR}/plugins/",
+                    f"git archive -o {guard.CONFIG_DIR}/settings.json HEAD"]:
+            self.assertTrue(t(cmd), cmd)
+        for cmd in ["git checkout-index -a --prefix=.git/hooks/",
+                    "git archive -o .git/hooks/pre-commit HEAD"]:
+            self.assertTrue(t(cmd, "PowerShell"), cmd)
+        for cmd in ["git checkout-index -a --prefix=out/", "git archive --output=out.tar HEAD",
+                    "git archive --prefix=out/ HEAD | tar -x", "git log --output=log.txt",
+                    "git format-patch -o patches HEAD~1", "tar -xf missing.tar",
+                    "tar cf a.tar .", "git -C .git archive HEAD | tar xf - -C hooks"]:
+            self.assertFalse(t(cmd), cmd)
+        for cmd in ["git checkout-index -a --prefix=$X/", "git archive -o \"$OUT\" HEAD",
+                    "git diff --output=$(mktemp)"]:
+            self.assertIn("opaque", self.kinds("Bash", {"command": cmd}, r), cmd)
+        self.assertEqual(self.kinds("Bash", {"command": "git checkout-index -a --prefix=out/"}, r),
+                         [])
+        # a tar archive the guard can read is judged by its members
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "m", ".git", "hooks"))
+            os.makedirs(os.path.join(d, "m", "ok"))
+            open(os.path.join(d, "m", ".git", "hooks", "pre-commit"), "w").close()
+            subprocess.run(["tar", "-cf", os.path.join(d, "evil.tar"), "-C",
+                            os.path.join(d, "m"), ".git"], check=True)
+            subprocess.run(["tar", "-cf", os.path.join(d, "fine.tar"), "-C",
+                            os.path.join(d, "m"), "ok"], check=True)
+            for cmd in [f"tar -xf {d}/evil.tar", f"tar xf {d}/evil.tar",
+                        f"tar --extract --file={d}/evil.tar"]:
+                self.assertTrue(t(cmd), cmd)
+            self.assertFalse(t(f"tar -xf {d}/fine.tar"))
+
+    def test_git_apply_and_am_paths(self):
+        r = repo_with_commit()
+        patch = lambda path, line="x": (f"diff --git a/{path} b/{path}\nnew file mode 100644\n"
+                                        f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+{line}\n")
+        files = {"settings.diff": patch(".claude/settings.json", "{}"),
+                 "hook.diff": patch("hooks/pre-commit"), "ok.diff": patch("src/a.txt"),
+                 "attr.diff": patch(".gitattributes", "*.c filter=evil"),
+                 "p0.diff": patch(".claude/settings.json").replace("a/", "").replace("b/", "")}
+        for name, text in files.items():
+            with open(os.path.join(r, name), "w") as f:
+                f.write(text)
+        t = lambda c: self.tampered("Bash", {"command": c}, r)
+        for cmd in ["git apply settings.diff", "git am settings.diff",
+                    "git apply --directory=.git hook.diff", "git apply attr.diff",
+                    "git apply -p0 p0.diff", "git apply --index --directory .git hook.diff"]:
+            self.assertTrue(t(cmd), cmd)
+        self.assertTrue(self.tampered("PowerShell", {"command": "git apply settings.diff"}, r))
+        for cmd in ["git apply ok.diff", "git apply --directory=src ok.diff", "git apply hook.diff"]:
+            self.assertFalse(t(cmd), cmd)
+        k = lambda c: self.kinds("Bash", {"command": c}, r)
+        for cmd in ["git apply --directory=../x ok.diff", "git apply --directory=/tmp ok.diff",
+                    "git apply --directory=$D ok.diff", "git apply --unsafe-paths < ok.diff",
+                    "git apply missing.diff", "printf x > n.diff && git apply n.diff"]:
+            self.assertIn("opaque", k(cmd), cmd)
+        self.assertEqual(k("git apply ok.diff"), [])
+        self.assertEqual(k("git apply --unsafe-paths ok.diff"), [])
+
+    def test_patch_and_archive_writers_in_a_pr_command(self):
+        sess = "s-r3-body"
+        run = session_run(sess, "t-r3-body")
+        pb = os.path.join(run, "PR-BODY.md")
+        order = [human("открой PR")]
+        for cmd in [f"git checkout-index -a --prefix={run}/; gh pr create -t t -F {pb}",
+                    f"git apply --directory=x p.diff; gh pr create -t t -F {pb}",
+                    f"git archive -o {pb} HEAD; gh pr create -t t -F {pb}"]:
+            self.assertIn("same command", run_hook(*bash(cmd), order, session=sess) or "", cmd)
+
+    def test_gh_config_dir_set_in_the_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "ghc"))
+            with open(os.path.join(d, "ghc", "config.yml"), "w") as f:
+                f.write("aliases:\n    p: pr merge\n    v: pr view\n")
+            os.makedirs(os.path.join(d, "x", "gh"))
+            with open(os.path.join(d, "x", "gh", "config.yml"), "w") as f:
+                f.write("aliases:\n    p: pr merge\n")
+            k = lambda c, tool="Bash": self.kinds(tool, {"command": c}, d)
+            for cmd in ["GH_CONFIG_DIR=ghc gh p 1", "export GH_CONFIG_DIR=ghc; gh p 1",
+                        "env GH_CONFIG_DIR=ghc gh p 1", "XDG_CONFIG_HOME=x gh p 1",
+                        f"GH_CONFIG_DIR={d}/ghc gh p 1"]:
+                self.assertEqual(k(cmd), ["merge"], cmd)
+            self.assertEqual(k("$env:GH_CONFIG_DIR='ghc'; gh p 1", "PowerShell"), ["merge"])
+            self.assertEqual(k("$env:gh_config_dir='ghc'; gh p 1", "PowerShell"), ["merge"])
+            self.assertEqual(k("GH_CONFIG_DIR=ghc gh v 1"), [])
+            self.assertEqual(k("GH_CONFIG_DIR=ghc gh pr view 1"), [])
+            for cmd in ["GH_CONFIG_DIR=nope gh p 1", "GH_CONFIG_DIR=$D gh p",
+                        "XDG_CONFIG_HOME=$(mktemp -d) gh p",
+                        "mkdir n; printf 'aliases:\\n  p: pr merge\\n' > n/config.yml; "
+                        "GH_CONFIG_DIR=n gh p 1",
+                        "cmd /c \"set GH_CONFIG_DIR=n && gh p\""]:
+                self.assertIn("opaque", k(cmd), cmd)
+            for cmd in ["$env:Xdg_Config_Home=$d; gh x",
+                        "[Environment]::SetEnvironmentVariable($n,'x'); gh x"]:
+                self.assertIn("opaque", k(cmd, "PowerShell"), cmd)
+
+
 class WrapperTest(unittest.TestCase):
     """hooks/hooks.json and its hooks/subagent-guard.sh."""
     ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -1824,9 +2780,100 @@ class WrapperTest(unittest.TestCase):
         with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
             skill = re.search(r'matcher:\s*"([^"]+)"', f.read()).group(1)
         self.assertEqual(self.hook()["matcher"], skill)
-        for tool in ("Bash", "Monitor", "Write", "Edit", "NotebookEdit", "Skill", "SendMessage",
+        for tool in ("Bash", "PowerShell", "Monitor", "Write", "Edit", "NotebookEdit", "Skill",
+                     "SendMessage", "RemoteTrigger", "CronCreate",
                      "mcp__clickup__clickup_update_task"):
             self.assertTrue(re.fullmatch(skill, tool), tool)
+
+    def test_post_matcher_sees_every_run_note_writer(self):
+        with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
+            post = re.findall(r'matcher:\s*"([^"]+)"', f.read())[1]
+        for tool in ("Bash", "PowerShell", "Write", "Edit"):  # every branch of note_run
+            self.assertTrue(re.fullmatch(post, tool), tool)
+
+
+TESTDATA = os.path.join(HERE, "testdata")
+
+
+class RealTranscriptTest(unittest.TestCase):
+    """testdata/transcript-2.1.286.jsonl: the first 155 entries of a real Claude Code 2.1.286
+    session, every field name and enum value kept, every text, path and id replaced by a neutral
+    placeholder (`p12`, `id-0004`). It holds a /command invocation typed by the user, noise
+    entries (hook_success, queue-operation, file-history-snapshot, system), AskUserQuestion
+    answers and one message the user queued mid-turn (commandMode "prompt", origin human)."""
+
+    def entries(self):
+        with open(os.path.join(TESTDATA, "transcript-2.1.286.jsonl"), encoding="utf-8") as f:
+            return [json.loads(line) for line in f]
+
+    def test_reads_the_real_shape(self):
+        path = os.path.join(TESTDATA, "transcript-2.1.286.jsonl")
+        first, after, saw_origin, truncated = guard.scan_back(path)
+        self.assertIn("<command-name>", first["message"]["content"])
+        self.assertEqual(guard.human_text(first), "p8")  # the command's args
+        self.assertEqual((saw_origin, truncated), (True, False))
+        self.assertEqual(sum(map(guard.is_queued, after)), 1)
+        text, actions, approved, used, unseen, failure = guard.read_authorization(path, TASKREPO)
+        self.assertEqual((text, actions, approved, used, unseen, failure),
+                         ("p687", set(), set(), set(), set(), None))
+
+    def test_commit_end_to_end(self):
+        entries = self.entries()
+        commit = bash("git commit -m x")
+        reason = run_hook(*commit, entries)
+        self.assertIn("no command for it", reason)
+        self.assertNotIn("no message typed", reason)
+        # the real queued entry, its prompt now a command
+        q = next(i for i, e in enumerate(entries) if guard.is_queued(e) and guard.is_human(e))
+        granted = json.loads(json.dumps(entries))
+        granted[q]["attachment"]["prompt"] = "закоммить"
+        self.assertIsNone(run_hook(*commit, granted))
+        # the real typed entry, as the latest message
+        typed = json.loads(json.dumps(next(e for e in entries if guard.is_human(e)
+                                           and not guard.is_queued(e))))
+        typed["message"]["content"] = "закоммить"
+        self.assertIsNone(run_hook(*commit, entries + [typed]))
+        # the real AskUserQuestion answer, its picked option now labelled [commit]
+        a = max(i for i, e in enumerate(entries)
+                if isinstance(e.get("toolUseResult"), dict) and "answers" in e["toolUseResult"])
+        picked = json.loads(json.dumps(entries))
+        result = picked[a]["toolUseResult"]
+        question = result["questions"][0]
+        label = "Commit [commit]"
+        question["options"][0]["label"] = label
+        result["answers"][question["question"]] = label
+        self.assertIsNone(run_hook(*commit, picked))
+
+
+class ClickUpCatalogueTest(unittest.TestCase):
+    """testdata/clickup-operators.json: the live ClickUp server's operator catalogue and its
+    dedicated tools, each with the class the guard gave it when recorded."""
+
+    def test_recorded_classes_hold(self):
+        with open(os.path.join(TESTDATA, "clickup-operators.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        samples = {"comment": {"comment_text": "x"}}
+        for row in data["dedicated_tools"]:
+            inp = samples.get(row["role"], {})
+            got = guard.classify_mcp(row["tool"], inp)
+            self.assertEqual(got[0][0] if got else None, row["guard_class"], row["tool"])
+            if row["role"] == "read":
+                self.assertEqual(got, [], row["tool"])
+            if "guard_class_status_only" in row:
+                got = guard.classify_mcp(row["tool"], {"task_id": "1", "status": "done"})
+                self.assertEqual(got[0][0], row["guard_class_status_only"], row["tool"])
+
+    def test_roles_map_to_classes(self):
+        """The hand-assigned role fixes the class, independent of what the guard said at
+        recording time."""
+        expected = {"read": None, "write": "tracker", "create-task": "create-task",
+                    "comment": "comment", "delete": "delete", "destructive": "destructive",
+                    "operator": "tracker"}
+        with open(os.path.join(TESTDATA, "clickup-operators.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        for row in data["dedicated_tools"]:
+            self.assertIn(row["role"], expected, row["tool"])
+            self.assertEqual(row["guard_class"], expected[row["role"]], row["tool"])
 
 
 if __name__ == "__main__":

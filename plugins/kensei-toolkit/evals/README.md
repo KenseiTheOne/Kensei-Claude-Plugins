@@ -23,7 +23,8 @@ claude plugin eval . --tag smoke --scaffold --judge-model opus --runs 1 --ablati
   --no-publish
 
 # ticket, unity-review and capture cases need a git repo (scaffold) and shell/file tools;
-# ticket-commit-at-gate also needs its conversation built first (see "The gate case" below)
+# ticket-commit-at-gate also needs its conversation built first (see "The gate case" below);
+# ticket cases also need a git the sandbox can run (see "Git for the ticket cases")
 python3 evals/ticket-commit-at-gate/make_history.py
 claude plugin eval . --tag ticket --scaffold --allow-tools Bash Write Edit \
   --judge-model opus --runs 1 --ablation none --no-publish --max-cost-usd 10
@@ -48,6 +49,62 @@ claude plugin eval . --scaffold --allow-tools Bash Write Edit --model opus \
 `--scaffold` runs the `fixture.sh` scripts in this directory (a throwaway git repo in the run's
 empty workspace); they are ours, so the flag is safe here. Results land in `evals/results/`;
 `.gitignore` keeps them, UUID-named session transcripts and `history.jsonl` out of git.
+
+## Git for the ticket cases
+
+The session runs git inside the eval sandbox, with the operator's `PATH` (the scaffold sees the
+same `PATH`). On macOS the sandbox refuses the Xcode git: `/usr/bin/git` is an xcrun shim that
+writes a cache in the per-user temp dir (`xcode-select: Failed to locate 'git'`,
+`Operation not permitted`), and the Command Line Tools git under `/Library/Developer` was refused
+in all but one 2.0.0 run. Binaries under
+`/opt/homebrew` do run there (checked with `xz` and `gh` on Claude Code 2.1.286), so a Homebrew
+git first on `PATH` is the expected fix; it is not yet confirmed by a live ticket run.
+
+- **Guard.** Both ticket `fixture.sh` scripts check the first `git` on `PATH` before building
+  anything. On macOS, when it is missing, `/usr/bin/git`, or under `/Library/Developer` or
+  `/Applications/Xcode*`, the scaffold exits 3 and the case reports
+  `scaffold failed (exit 3): needs git: …` with no model turn and $0 spent. The case still counts
+  as score 0 (the case format has no skip), so read that error as "not run", not as a skill
+  failure. `KENSEI_EVAL_GIT_CHECK=off` turns the check off only when a fixture is run directly,
+  as `make_history.py` does (it runs the gate fixture outside the sandbox); `claude plugin eval`
+  does not pass it to the scaffold, so a run through the harness always has the check on.
+- **Other cases.** `unity-review-readonly` and `diff-tour-on-show-diff` build git repos too, and
+  the unity-review session reviews an uncommitted change, so on macOS with only the Xcode git its
+  `git diff` and `git status` calls fail the same way. Before blaming the skill for a low score,
+  search its trace for `Operation not permitted`. Their scaffolds run git outside the sandbox and
+  their graders do not need the session's git, so they carry no guard.
+- **macOS.** `brew install git`, check `command -v git` prints `/opt/homebrew/bin/git`, then run
+  the ticket command above.
+- **Linux CI.** A manual job (not in `ci.yml`: every run spends model credit, and the owner
+  decides when it runs). Sketch, on `ubuntu-latest` with the repo's pinned Claude Code. Ubuntu
+  24.04 runners block unprivileged user namespaces through AppArmor, which bubblewrap needs, so
+  the install step lifts that restriction first; without it every sandboxed Bash call fails:
+
+  ```yaml
+  evals-ticket:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat git python3
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - working-directory: plugins/kensei-toolkit
+        env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
+        run: |
+          python3 evals/ticket-commit-at-gate/make_history.py
+          claude plugin eval . --tag ticket --scaffold --allow-tools Bash Write Edit \
+            --model opus --judge-model opus --runs 1 --ablation none --no-publish \
+            --trust-plugin --max-cost-usd 10 --json results.json
+      - uses: actions/upload-artifact@v4
+        with: { name: evals-ticket, path: plugins/kensei-toolkit/results.json }
+  ```
+
+  It also needs `workflow_dispatch:` under the workflow's `on:`. The sandbox on Linux needs
+  `bubblewrap`; the job is untested, so its first run is the check.
 
 ## The gate case
 
@@ -81,7 +138,8 @@ the repository and the run directory a finished run leaves (fix in the working t
 - Not yet verified by a live run: whether the guard hook (declared in the skill's frontmatter)
   registers in a session resumed from `history_file`; the trace does not record hook calls. In the
   one 2.0.0 live run where git worked (it ran the Command Line Tools git by its absolute path),
-  the commit went through on the typed «закоммить» with every git-file grader passing.
+  the commit went through on the typed «закоммить» with every git-file grader passing. Every
+  other 2.0.0 run was refused that binary, so the scaffold guard treats it as unusable.
 
 ## Known limits
 
@@ -109,13 +167,9 @@ the repository and the run directory a finished run leaves (fix in the working t
   tool list even when `allowed_tools` names it). Skills fall back to asking in text, so the
   capture cases read the question from the reply with an llm grader, and `no-mode-question` in
   `unity-review-readonly` passes by default.
-- On macOS without a standalone git (`/usr/bin/git` is the Xcode shim), git does not run in the
-  eval sandbox: the shim reads `/Library/Developer/CommandLineTools` and writes an xcrun cache in
-  the per-user temp dir, and the sandbox refuses both (`xcode-select: Failed to locate 'git'`).
-  The scaffold, which runs outside the sandbox, still builds the repo. Both ticket cases then stop
-  at their first git call and fail their commit/criteria graders; read the trace for
-  `Operation not permitted` before blaming the skill. They need a machine whose `PATH` has a git
-  the sandbox may read (Homebrew, or Linux CI).
+- On macOS with only the Xcode git, both ticket cases stop in the scaffold with `needs git` (see
+  "Git for the ticket cases"); the suite's exit code is then 1 even when every other case passes.
+  The `unity-review-readonly` session's git calls fail there too, with no guard to say so.
 - Use `--judge-model opus` for the llm graders. With the default haiku judge, correct Russian
   replies in the capture cases failed about one run in three (unanimous FAIL votes on replies that
   meet the criteria); with the opus judge the same cases scored 6/6, at about $0.03–0.06 of judge

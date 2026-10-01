@@ -17,8 +17,11 @@ Blocks, in code, what the skill may only do on the user's explicit command:
                main`, `git rebase --onto origin/main …`, `git pull origin main`) — allowed under
                commit or merge-local; it uses
                up the commit command only when no merge-local command is open
-  push         git push to a non-base branch, git send-email / send-pack, gh repo sync,
-               gh pr update-branch (force with --force / --rebase), any gh call with --push,
+  push         git push to a non-base branch (a plain `git push` / `git push <remote>` is judged by
+               where the repository's settings send it: remote.<r>.push, push.default with
+               branch.<b>.merge — upstream / simple / tracking to the upstream, matching to
+               every branch — so a base branch there is force), git send-email / send-pack, gh repo
+               sync, gh pr update-branch (force with --force / --rebase), any gh call with --push,
                GitHub/GitLab/GitKraken MCP file/branch pushes
   publish      creating something public outside the task branch, one grant per object — a
                release (gh release create / upload / edit, gh api writes to …/releases), a gist
@@ -36,17 +39,37 @@ Blocks, in code, what the skill may only do on the user's explicit command:
                through a GitHub MCP. «поставь секрет» is no visibility change. gh repo delete and
                MCP repository deletes are destructive
   pr           opening a PR / MR (gh pr create, create_pull_request, api POST …/pulls)
-  merge        merging a PR / MR (gh pr merge, merge_pull_request, api …/merge)
+  pr-body      a PR body that is not this session's approved <run_dir>/PR-BODY.md — on gh pr
+               create, gh pr edit --body / --body-file, api …/pulls with body=, GraphQL
+               createPullRequest / updatePullRequest, a GitHub / GitLab MCP PR create or update.
+               The body passes when it is that file (--body-file, also after a `cd` in the same
+               command; `--body "$(cat <file>)"`; gh api `-F body=@<file>`, GraphQL `body: $body`
+               with `-F body=@<file>`) or text equal to it byte for byte, trailing line breaks
+               aside; --web leaves it to the user. The file is the approved one only while its
+               sha256 equals the last `pr_body_sha256:` in RUN.md (recorded when the user approved
+               it) and the same command cannot write PR-BODY.md or RUN.md: it holds nothing but
+               plain reads, git and gh — no redirect into a name built at run time (`> $P`,
+               `PR-BODY.{md,x}`), no cp / tee / script / function. A body in a nested field
+               (`-F input[body]=…`, JSON --input variables) cannot be checked. No tag grants
+               another text: it is approved first
+  merge        merging a PR / MR (gh pr merge, merge_pull_request, api …/merge, GraphQL
+               mergePullRequest / enablePullRequestAutoMerge)
   force        a push that rewrites, deletes or widens: --force*, -f in any bundle (-fu),
                --delete, --mirror, --all, --tags, +refspec; or one to a base branch — main,
                master, develop, production, …, the remote's default branch, the `base_branch:`
                of this session's RUN.md, or the current branch when none is named
-  history      git pull, reset --hard/--soft or to a ref, update-ref, branch -D/-f, checkout -B,
+  branch-delete  git branch -d / -D / --delete («удали ветку», "delete the branch", [delete-branch]
+               or [reset]); it grants no reset, clean or worktree remove. A remote branch delete
+               (push --delete, :ref) stays force
+  history      git pull, reset --hard/--soft or to a ref, update-ref, branch -f/-M/-C, checkout -B,
                switch -C, filter-branch/-repo, stash pop/apply/drop; and throwing local changes
-               away: clean -f, checkout/restore of paths, checkout/switch --force
+               away: clean -f, checkout/restore of paths, checkout/switch --force, worktree remove
+               --force
   status       a change of the status field only: an MCP update, transition or close / reopen
                tool whose only changed key is the status (state, transition), gh issue close /
-               reopen
+               reopen. A typed command that names tasks covers exactly those tasks, each once
+               (the call's task id, issue number or key matched against the ids and link
+               segments typed); naming none, or an option's [status], covers one change
   create-task  creating a task / issue (clickup_create_task, create_issue, gh issue create, an
                operator create on a task model); one command covers the whole batch
   tracker      any other tracker write (MCP tool, clickup_execute_operator write pairs, gh issue /
@@ -55,10 +78,41 @@ Blocks, in code, what the skill may only do on the user's explicit command:
   destructive  deleting a task / issue / page, merging tasks
   delete       deleting a tracker comment
   comment      posting or editing a tracker comment — only text the user approved word for word
+  send         a message that leaves through mail, chat or a calendar: a mail / chat / calendar
+               MCP server's send, reply, forward, post, reaction, invite or respond, a chat
+               message or canvas edit, any calendar event write (Gmail send_message / reply /
+               forward / send_draft, Slack post / reply / canvas, Calendar create / update /
+               delete / respond_to_event); and on any other non-tracker server, a tool named for
+               sending mail or a message (send / reply / forward with mail / email / message /
+               sms: outlook_email_send, send-mail, send_gmail_message) or for writing an event
+               (create / update / delete / respond with event / meeting / calendar). Drafts and
+               reads pass (`get_post`); a Slack send_message_draft counts as a send. Server names
+               that also mean something else (signal, sms, zoom, teams, exchange) count only as
+               the whole server name. curl / wget / httpie POSTs to webhooks
+               (hooks.slack.com, discord.com/api/webhooks, *.webhook.office.com, Telegram bots,
+               …). One command, one message
   tamper       writing to this session's transcript, the guard's markers, the guard's own files
                or plugin install, or hook settings (a Bash write to a settings*.json; a Write/Edit
                that changes hooks, disableAllHooks, enabledPlugins or allowManagedHooksOnly, the
-               file compared as JSON before and after; `claude plugin disable`) — never allowed.
+               file compared as JSON before and after; `claude plugin disable`), or git settings
+               that redirect a push, redefine a git word or run a program (`git config` writes of
+               remote.*, branch.*.merge / remote / pushRemote, alias.*, core.hooksPath /
+               editor / sshCommand / fsmonitor, sequence.editor, include.* / includeIf.*, url.*,
+               push.default, filter / diff / merge drivers; `git remote add` / `set-url` /
+               `rename` / `set-head`; and the same as a file write — Write / Edit, a redirect,
+               tee, cp, PowerShell Set-Content / Add-Content / Out-File — to .git/config, any
+               worktree's or submodule's config, .git/hooks/* or core.hooksPath, .git/info/
+               attributes, ~/.gitconfig, $XDG_CONFIG_HOME/git/config, gh's config.yml; a
+               .gitattributes or global attributes write that names a filter / diff / merge
+               driver other than lfs and the built-in merge drivers, or copies one in; a link made
+               to .git, .claude or a protected path; `gh alias set` naming a gated write, `gh
+               alias import`; a write git itself makes at a path an option or a patch names —
+               checkout-index --prefix (each tracked file under it), archive -o, diff / log
+               --output, format-patch -o, bundle create, the paths of a readable apply / am patch
+               under --directory with -p, a .gitattributes driver in one; tar -x of a readable
+               archive's members, or of a `git archive --prefix=…` piped into it) — never
+               allowed. Paths are compared without case, as macOS and Windows file systems do
+               (`.GIT/config` is `.git/config`).
                A settings file is any settings*.json in the config dir ($CLAUDE_CONFIG_DIR or
                ~/.claude) or in a `.claude` dir, or managed-settings.json, matched on the path as
                written and on its realpath (a symlink to dotfiles is still the settings);
@@ -70,11 +124,51 @@ Blocks, in code, what the skill may only do on the user's explicit command:
                is git (its name says git; or it names no other tool and its first argument is
                a writing git subcommand; a literal basename after it, `$ROOT/gradlew`, decides), a
                git subcommand built from $VAR or $(…) (`git $S origin`), runner targets named
-               exactly push / publish / release / deploy / ship (`make push`, `npm run release`)
-               — never allowed. A shell named by $VAR (`$SHELL -c "…"`) is read like `sh -c`
+               exactly push / publish / release / deploy / ship (`make push`, `npm run release`),
+               a `git -c` / --config-env of a setting that runs a program, defines an alias or
+               changes a remote (core.editor / sshCommand / fsmonitor / hooksPath / pager,
+               sequence.editor, alias.*, remote.*, url.*, include*, credential helpers, diff /
+               merge / filter drivers, …; a plain pager or editor name passes, as in the
+               environment), one of branch.* / push.default before a push; `git --exec-path=…`;
+               GIT_CONFIG_* (but GIT_CONFIG_GLOBAL/SYSTEM=/dev/null, GIT_CONFIG_NOSYSTEM),
+               GIT_SSH_COMMAND, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_PAGER, EDITOR, … set before git
+               or exported earlier in the command (a plain editor or pager name passes); a git or
+               gh write that git runs for itself — rebase -x, bisect run, submodule foreach,
+               filter-branch --*-filter, filter-repo callbacks, difftool / mergetool -x, grep -O,
+               --upload-pack / --receive-pack — or that xargs,
+               parallel, find -exec, fd -x run once per input; in PowerShell, Invoke-Expression
+               of a built string (`iex $cmd`, `iex ('git ' + 'push')`), an encoded command (pwsh
+               -EncodedCommand / -enc / -e, from Bash too), a call `&` / dot-source `.` (with or
+               without a space: `&'git'`, `&("git")`, `.( … )`) of a name that is not a literal —
+               `& "gi$('t')"`, `&("gi"+"t")`, `& $g` — unless it plainly names another tool, and a
+               `$var` / `(…)` program that may be git (`&("{0}{1}" -f …)`, `&(Get-Command gi*)`),
+               `git @args`, git after `$env:` / Set-Item env: / [Environment]::
+               SetEnvironmentVariable or a cmd `set` of a setting as above (names without case, as
+               Windows reads them; HOME, XDG_CONFIG_HOME and USERPROFILE move the global config);
+               a git write at a path built at run time, apply / am --directory outside the
+               repository, --unsafe-paths with a patch from stdin, a patch it cannot open; a gh
+               word it does not know while the command sets GH_CONFIG_DIR / XDG_CONFIG_HOME (Bash,
+               export, env, $env:, cmd set) to a config.yml it cannot read or without that alias
+               — one it reads gives the alias; a GraphQL request whose query is not
+               read (a variable, a substitution, a missing @file or --input, a curl body that is
+               not literal JSON) — never allowed. A shell named by
+               $VAR (`$SHELL -c "…"`) is read like `sh -c`; `pwsh -c "…"` from Bash like PowerShell
   skill-post   a skill told to post (/code-review --comment, --post) — never allowed
   delegate     SendMessage — the user confirms it (permissionDecision "ask")
+  schedule     RemoteTrigger (other than list / get / list_runs / get_run_log) and CronCreate: work
+               that runs later or in the cloud, outside this guard — the user confirms it ("ask");
+               subagents are refused
   stash        git stash push — subagents only; the orchestrator stashes on the Step 5 answer
+
+The PowerShell tool is read like Bash where it can be: git and gh words in each statement (call
+operators, `git.exe`, `& (Get-Command git)`, backtick escapes undone; a script block `&{…}`,
+`.{…}`, `{ … }`, `@(…)`, `[void](…)` and `$(…)`, also inside "…", read as statements),
+Start-Process arguments ('push','origin', @('push'), -FilePath git.exe -ArgumentList 'push
+origin'), what a literal
+Invoke-Expression / cmd /c string carries, Invoke-WebRequest / Invoke-RestMethod / curl.exe
+writes, and writes to protected paths — in order after Set-Location / cd, Copy-Item / Move-Item
+into a directory as DIR/<name>, [IO.File]::Write* / Copy / Move, a `$p = '…'` literal read where
+$p is used. A failed PowerShell call uses its command up.
 
 A command comes from the session transcript, read back to the latest message the user typed
 (origin.kind == "human"). A message the user queued while the model was busy adds its orders to
@@ -88,7 +182,8 @@ in the first person only: «я сам», «сам запушу», "I'll do it" r
 else («тесты не трогай») voids nothing.
 
   typed text     conservative: imperatives such as «закоммить», «запушь», «залей ветку»,
-                 «переведи в ревью» (status), «создай задачу» (create-task), «залейся в мейн» /
+                 «переведи в ревью» (status), «создай задачу» (create-task), «удали ветку»
+                 (branch-delete; "pull the latest" orders nothing), «залейся в мейн» /
                  «смерджи в мейн» (commit + merge-local; «залей» also the push to the base
                  branch); negation scoped to its list item, conditional or cancelled sentences
                  dropped.
@@ -96,12 +191,21 @@ else («тесты не трогай») voids nothing.
                  imperative or a polite request («закоммить?», «можешь закоммитить?», "could you
                  push it?"). A git/gh command counts only as the whole item, never mentioned
                  inside a sentence; pasted text — fenced blocks, `>` lines, the middle of a long
-                 message (only the first and last 4 KB are read) — never counts. English verbs
-                 need a git object: "revert that commit", not "revert these functions".
+                 message (only the first and last 4 KB are read), a quotation (paired quotes,
+                 single ones included, after «говорит», «написано», «сказано», "says"; double
+                 quotes after a colon: «тикет говорит: «запушь»») — never counts. English verbs need a git object: "revert that
+                 commit", "push to github", "commit with message …", not "revert these
+                 functions". A status command covers the tasks it names, each once («переведи
+                 86abc1 и 86abc2 в ревью» is those two; a PR or commit link, «PR #45» is no
+                 task); naming none, one change. A message to a chat or mail needs somewhere to
+                 go («отправь сообщение», «напиши в слак», «отправь письмо»), an event the
+                 calendar («создай событие в календаре», «назначь встречу») — «напиши сообщение
+                 коммита» and «добавь событие в лог» are no send. «обнови описание PR» / "update
+                 the PR description" is a tracker edit.
   AskUserQuestion answers after that message: an option the user picked grants exactly the tags
                  in its label — [commit] [merge-local] [push] [pr] [merge] [force-push]
-                 [publish] [repo-admin] [reset] [status] [create-task] [tracker-edit]
-                 [delete-task] [delete-comment]; [publish] grants the object its label names
+                 [publish] [repo-admin] [reset] [delete-branch] [status] [create-task] [tracker-edit]
+                 [delete-task] [delete-comment] [send]; [publish] grants the object its label names
                  (релиз / release, репо / repo, гист / gist) and [repo-admin] the kind its label
                  names (visibility / rename / archive, секрет / variable, workflow / CI, защита /
                  ruleset, удалить релиз / гист) — nothing when it names none; [post]
@@ -131,30 +235,58 @@ Two registrations, because a skill's frontmatter hooks do not reach its subagent
   guard.py --post      SKILL.md frontmatter, PostToolUse; only notes this session's run (below).
 
 This session's run is the run directory whose RUN.md the main session last wrote (Write / Edit,
-or a shell redirect into it), noted by `guard.py --post` once the call has run; the marker keeps
-it. Only its `base_branch:` joins the base
-branches; before the session writes a RUN.md there is none, and another task's RUN.md in the
+a shell redirect into it, or a PowerShell Set-Content / Out-File / redirect), noted by
+`guard.py --post` once the call has run; the marker keeps it. Only its `base_branch:` joins the base branches, and only its PR-BODY.md is an approved PR
+body; before the session writes a RUN.md there is none, and another task's RUN.md in the
 same repository never counts.
 
 Output: nothing when the call is not gated or is authorized — the normal permission flow
 continues, the hook never grants anything. A JSON "deny" with the reason otherwise ("ask" for
-SendMessage). Internal errors fail closed for calls that look gated.
+SendMessage, RemoteTrigger and CronCreate in the main session). Internal errors fail closed for calls that look gated.
 
 Known gaps, where the skill's text rules alone apply: git run from a script or an interpreter
-(`sh ./x.sh`, `python -c`), the browser, a child `claude` session, tracker CLIs other than gh.
-A typed status command allows any status change, closing the issue included — the guard cannot
+(`sh ./x.sh`, `python -c`, a .ps1), the browser, a child `claude` session, tracker CLIs other
+than gh, git settings exported by an earlier command, a patch fed to git apply / am on stdin,
+a tar archive from stdin or one tarfile cannot list, a git archive written earlier in the same
+command included (only -C .git/hooks is tamper; .git and ~/.claude pass), a tar's attached
+-C<dir>, name rewriting (--transform, --xform, -s) or run in a subshell after cd ((cd .git &&
+tar -x), sh -c), any tar in PowerShell (no tar check there), other extractors and patch(1)
+(unzip, Expand-Archive, python -m tarfile, busybox tar, pax), git merge-file (its first path
+gets no protected-path check, only the PR-write one), globs in a target path (.git/conf*),
+PowerShell env writes the regex misses (-Value or -Force before -Path, New-Item -Name X -Path
+env:, an Environment:: or computed env: path, Copy-Item / Rename-Item into env:, Set-Location
+env:, Start-Process -Environment), GH_CONFIG_DIR set for a nested shell (X=… bash -c, cmd /c
+"set X=… & gh") or by readonly / eval / read, HOME / $env:AppData / $env:USERPROFILE moving gh's
+config (HOME only makes git opaque), a git alias for checkout-index / archive / apply in the
+tamper check, a gh config.yml
+that exists and is rewritten in the same command (read as it was), mailbox housekeeping
+(labels, trash), a
+PowerShell variable set other than by a literal in the same command (judged by name), reported
+speech without quotes («тикет говорит: запушь» is read as an order). PR-BODY.md is approved by
+its hash in RUN.md: the guard trusts that `pr_body_sha256:` was written when the user approved
+the text shown at the gate. A cancel word drops the sentence
+(«отмени встречу», "cancel the meeting" grant nothing; a [send] option does). A typed status
+command allows any status change of a named task, closing the issue included — the guard cannot
 see the target status. A typed «сначала прогони тесты, потом закоммить» grants the commit at
 once — the order rests on the skill text.
+Skill-frontmatter hooks do not come back in a resumed session (`claude --resume`, measured on
+2.1.286) until the skill is invoked again: `--main` and `--post` are off until then; the plugin
+hooks.json wrapper does not depend on the skill (by design, not measured after a resume).
 The transcript fields read here (origin.kind, queued_command attachments, toolUseResult,
-is_error) were checked against Claude Code 2.1.285.
+is_error) were checked against Claude Code 2.1.286 (testdata/transcript-2.1.286.jsonl);
+task-notification queued_command entries there also carry `renderedInHumanTurn`, which is not
+read — their origin is not human. ClickUp operators are judged by their names' words: the live
+catalogue had none enabled (testdata/clickup-operators.json).
 """
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
+import tarfile
 import sys
 
 # --- classification tables ----------------------------------------------------------------
@@ -194,7 +326,7 @@ BASE_BRANCHES = {"main", "master", "develop", "dev", "trunk", "release", "produc
                  "staging", "stable"}
 # gh: commands that only read or touch local config; anything else is a write
 GH_LOCAL_GROUPS = {"auth", "config", "alias", "completion", "help", "extension", "version",
-                   "browse", "search", "status", "codespace", "co"}
+                   "browse", "search", "status", "codespace", "co", "copilot"}
 GH_READ_VERBS = {"view", "list", "ls", "diff", "checks", "status", "download", "watch", "clone",
                  "checkout", "get", "field-list", "item-list", "verify", "verify-asset", "check",
                  "logs"}
@@ -272,6 +404,8 @@ NOT_RELEASE = (r"(?!\s+(?:branch|build|candidate|notes?|mode|config\w*|flag|scri
 NOT_REPO = (r"(?!\s+(?:pattern|class|interface|layer|object|method|module|abstraction|"
             r"implementation|instance|field|wrapper|mock|stub|test|type|struct|service|helper|"
             r"паттерн|класс|интерфейс|слой|метод|модул)\w*)")
+CHAT_RU = (r"(?:слак|slack|чат|телеграм\w*|telegram|дискорд|discord|тимс|teams|"
+           r"канал\w*|личк\w*)(?![\w-])")
 RU_IMPERATIVE = {
     "commit": r"(?:за)?комм?ит(?:ь|ни|ьте|ните)|(?:за|с)?мерд?ж(?:и|ни)(?!\s+(?:\S+\s+)?"
               r"(?:пр|pr|пулл\w*|pull|mr|мр)\b)|ребейзни|засквошь|сквошни|(?:за)?амендь|амендни|"
@@ -283,11 +417,14 @@ RU_IMPERATIVE = {
             r"origin|remote|ремоут|гит|github|гитхаб)",
     "pr": r"(?:открой|создай|сделай|заведи)(?:\s+\S+)?\s+" + PR_WORDS,
     "merge": r"(?:за|с)?мерд?ж(?:и|ни)(?:\s+\S+)?\s+(?:пр|pr|пулл\w*|pull\s+request|mr|мр)",
-    "force": r"форсни|(?:за)?форс-?пуш\w*|(?:за)?пуш\w*(?:\s+\S+)?\s+(?:в|на)\s+" + BASE_WORDS +
+    "force": r"форсни|(?:за)?форс-?пуш\w*|(?:удали|снеси|грохни)(?:\s+\S+){0,2}\s+(?:ветк|бранч)\w*"
+             r"(?:\s+\S+)?\s+(?:на|с|со|из|в)\s+(?:origin|remote|ремоут\w*|гитхаб\w*|github|сервер\w*|"
+             r"удал[её]нн\w*)|(?:за)?пуш\w*(?:\s+\S+)?\s+(?:в|на)\s+" + BASE_WORDS +
              r"|" + POUR + r"(?:\s+\S+){0,2}\s+(?:в|на)\s+" + BASE_WORDS,
     "history": r"сбрось|откати|подтяни|спулль|(?:верни|достань|примени|восстанови)(?:\s+\S+)?\s+"
                r"(?:ст[еэ]ш\w*|stash)|(?:почисти|очисти)(?:\s+\S+){0,2}\s+(?:рабоч\w+|дерев\w*|"
                r"worktree|untracked)|выкинь(?:\s+\S+){0,2}\s+изменени\w*",
+    "branch-delete": r"(?:удали|снеси|грохни)(?:\s+\S+){0,2}\s+(?:ветк\w*|бранч\w*)",
     "merge-local": POUR + r"(?:\s+" + NOT_PR + r"\S+){0,2}\s+(?:в|на)\s+" + BASE_WORDS + r"|"
                    r"(?:с|за)?мерд?ж(?:и|ни)?(?:\s+" + NOT_PR + r"\S+)?\s+(?:в|на)\s+" +
                    BASE_WORDS,
@@ -296,7 +433,19 @@ RU_IMPERATIVE = {
                r"closed|закрыт\w*)|(?:смени|поменяй|измени|обнови|поставь)(?:\s+\S+){0,2}\s+"
                r"статус\w*|(?:возьми|бери)(?:\s+\S+)?\s+в\s+работу|закрой(?:\s+\S+)?\s+"
                r"(?:задач\w*|тикет\w*|issue)|переоткрой\w*|статус\s*(?:→|->)",
-    "tracker": r"назначь\w*",
+    "tracker": r"назначь\w*(?!(?:\s+\S+)?\s+(?:встреч|созвон|митинг|событи)\w*)|"
+               r"(?:обнови|поправь|измени|перепиши)\s+описани\w*(?:\s+(?:к|у|в|для))?\s+" +
+               PR_WORDS,
+    # a message with somewhere to go: a letter, a chat, «отправь сообщение» — not «напиши
+    # сообщение коммита»; a meeting, or an event in the calendar — not «добавь событие в лог»
+    "send": r"(?:отправь|пошли|перешли|ответь|напиши)(?:\s+\S+){0,2}\s+(?:(?:на\s+)?письм\w*|"
+            r"мейл\w*|email|(?:в|во)\s+" + CHAT_RU + r")|(?:отправь|пошли|перешли)(?:\s+\S+)?\s+"
+            r"сообщени\w*(?!(?:\s+\S+)?\s+(?:в\s+|к\s+|для\s+)?коммит\w*)|напиши(?:\s+\S+)?\s+"
+            r"сообщени\w*(?:\s+\S+)?\s+(?:в|во)\s+" + CHAT_RU + r"|"
+            r"(?:создай|назначь|поставь|добавь|перенеси)(?:\s+\S+){0,2}\s+(?:встреч\w*|"
+            r"созвон\w*|митинг\w*)|(?:создай|назначь|поставь|добавь)(?:\s+\S+){0,2}\s+"
+            r"(?:событи\w*(?:\s+\S+){0,2}\s+)?в\s+календар\w*|"
+            r"(?:прими|отклони)(?:\s+\S+)?\s+приглашени\w*",
     "create-task": r"(?:создай|создайте|заведи|заведите|добавь|добавьте)"
                    r"(?:\s+(?!(?:в|во|к|на|из|по|для|от)\s)\S+){0,2}\s+"
                    r"(?:задач\w*|тикет\w*|таск\w*|issue\w*|подзадач\w*)"
@@ -335,11 +484,12 @@ RU_INFINITIVE = {  # only with a polite marker or «не забудь»
 # An English verb orders a git action only with a git object: "commit it", "push the changes",
 # "revert that commit" — not "revert these functions" or "reset the counter".
 GIT_OBJECT = (r"(?:changes?|commits?|work|fix(?:es)?|branch(?:es)?|diff|stuff|everything|all|"
-              r"result|edits?|code)")
-EN_TAIL = (r"(?=\s*$|\s+(?:it|this|that|them|everything|now|please|pls|plz|asap|already|"
+              r"result|edits?|code|latest)")
+EN_TAIL = (r"(?=\s*$|\s+(?:these|those)(?:\s+(?:please|pls|plz|now))?\s*$|\s+(?:it|this|that|them|everything|now|please|pls|plz|asap|already|"
            r"--\S*)(?![\w'])|\s+(?:(?:the|my|your|these|those|this|that|all|our|its)\s+)+"
            + GIT_OBJECT + r"(?![\w'])|\s+" + GIT_OBJECT + r"(?![\w'])|\s+(?:to|into|onto|with)\s+"
-           r"(?:the\s+)?(?:branch|remote|origin|\S*/\S+|" + BASE_WORDS + r")(?![\w']))")
+           r"(?:the\s+)?(?:branch|remote|origin|upstream|github|gitlab|\S*/\S+|" + BASE_WORDS + r")(?![\w'])|"
+           r"\s+with\s+(?:the\s+|a\s+)?(?:message|msg|-m)(?![\w']))")
 EN_STATUS = (r"(?:review|done|qa|testing|test|closed|complete|completed|backlog|todo|to\s+do|"
              r"ready|blocked|in\s+(?:review|progress|qa|testing|work)|progress|\"[^\"]+\")")
 EN_IMPERATIVE = {  # must start the list item
@@ -349,15 +499,28 @@ EN_IMPERATIVE = {  # must start the list item
     "pr": r"(?:open|create|raise|file)\s+(?:a\s+|the\s+)?(?:pr|pull\s+request|mr|merge\s+request)",
     "merge": r"merge\s+(?:the\s+|this\s+)?(?:pr|pull\s+request)",
     "force": r"force[- ]?push|push(?:\s+\S+){0,2}\s+(?:to|into)\s+(?:origin/)?" + BASE_WORDS +
-             r"(?![\w'])",
-    "history": r"(?:pull|reset)" + EN_TAIL + r"|(?:pop|apply|restore)\s+(?:the\s+)?stash|"
+             r"(?![\w'])|delete\s+(?:the\s+|this\s+|that\s+|my\s+)*(?:remote\s+branch(?:es)?|"
+             r"branch(?:es)?(?:\s+\S+)?\s+(?:on|from|in)\s+(?:the\s+)?(?:origin|remote|github|"
+             r"gitlab|server))(?![\w-])",
+    # "pull the latest" is no reset: it names what to bring in, not a history rewrite
+    "history": r"(?:pull(?!\s+(?:in\s+)?(?:the\s+)?latest(?![\w']))|reset)" + EN_TAIL +
+               r"|(?:pop|apply|restore)\s+(?:the\s+)?stash|"
                r"stash\s+pop|discard\s+(?:(?:the|my|all|local)\s+)*changes",
+    "branch-delete": r"delete\s+(?:the\s+|this\s+|that\s+|my\s+|local\s+)*branch(?:es)?"
+                     r"(?![\w-])(?!\s+protection)",
     "merge-local": r"merge(?:\s+(?!(?:pr|pull|mr|merge)(?![\w-]))\S+){0,2}\s+(?:to|into)\s+"
                    r"(?:origin/)?" + BASE_WORDS + r"(?![\w'])",
     "status": r"(?:move|set|change|mark|close|reopen)(?:\s+\S+){0,3}\s+(?:status|"
               r"(?:as\s+|to\s+)?" + EN_STATUS + r"(?![\w']))|(?:close|reopen)\s+"
               r"(?:the\s+|this\s+)?(?:task|issue|ticket)",
-    "tracker": r"assign\s+(?:the\s+|this\s+)?(?:task|issue|ticket)",
+    "tracker": r"(?:update|edit|rewrite)\s+(?:the\s+)?(?:pr|pull\s+request|mr)\s+"
+               r"(?:description|body)|assign\s+(?:the\s+|this\s+)?(?:task|issue|ticket)|assign\s+(?:it\s+|this\s+|"
+               r"(?:the\s+|this\s+)?(?:task|issue|ticket)\s+)?to\s+me(?![\w'])",
+    "send": r"(?:send|forward|reply\s+to)\s+(?:the\s+|an?\s+|this\s+|that\s+|my\s+)?(?:e-?mail|"
+            r"mail|message|reply|invite|invitation)|post\s+(?:it\s+|this\s+|that\s+)?(?:to|in|on)\s+"
+            r"(?:the\s+)?(?:slack|discord|teams|telegram|channel|chat)|(?:create|schedule|book|"
+            r"reschedule)\s+(?:a\s+|an\s+|the\s+|this\s+)?(?:meeting|event|call)(?![\w-])|"
+            r"(?:accept|decline)\s+(?:the\s+|this\s+)?(?:invite|invitation|meeting)",
     "create-task": r"(?:create|open|file|add)\s+(?:a\s+|an\s+|the\s+|these\s+|new\s+)*"
                    r"(?:tasks?|issues?|tickets?)(?![\w-])(?!\s+comments?)",
     "publish-release": r"(?:publish|create|cut)\s+(?:a\s+|the\s+|new\s+)*release(?![\w-])" +
@@ -400,8 +563,11 @@ SEGMENT_STATUS = re.compile(r"^(?:\S+\s+)?(?:(?:probe|fix|full)\s+)?в\s+(?:ре
 
 TAGS = {"commit": "commit", "merge-local": "merge-local", "push": "push", "pr": "pr",
         "merge": "merge", "force-push": "force", "reset": "history",
-        "status": "status", "create-task": "create-task", "tracker-edit": "tracker",
+        "delete-branch": "branch-delete",
+        "status": "status", "create-task": "create-task", "tracker-edit": "tracker", "send": "send",
         "delete-task": "destructive", "delete-comment": "delete"}
+# [reset] keeps granting a branch delete, as SKILL.md describes it ("deleting a branch")
+TAG_ALSO = {"reset": {"branch-delete"}}
 # [publish] and [repo-admin] grant the objects their option's label names; naming none grants nothing
 LABEL_OBJECTS = {
     "publish": {
@@ -426,8 +592,8 @@ REPO_ADMIN = {"repo-admin-settings", "repo-admin-secrets", "repo-admin-ci",
 # create-task is not used up: one command covers the batch of tasks the dialog agreed on, which a
 # tracker without a bulk operator creates one call per task
 CONSUMED_BY_USE = {"commit", "merge-local", "push", "pr", "merge", "force", "publish-release",
-                   "publish-repo", "publish-gist", "history", "status", "tracker", "destructive",
-                   "delete"} | REPO_ADMIN
+                   "publish-repo", "publish-gist", "history", "branch-delete", "status", "tracker", "destructive",
+                   "delete", "send"} | REPO_ADMIN
 
 
 def normalize_text(s):
@@ -443,6 +609,14 @@ URL = re.compile(r"[a-z][a-z0-9+.-]{0,15}://\S{0,2048}")
 FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[ \t]*$|\Z)", re.M | re.S)
 
 
+# a quotation, not an order: text in paired quotes after «говорит», «написано», "says" (single
+# quotes too), or in double quotes after a colon («тикет говорит: «запушь»», `ticket: "push"`)
+_QUOTES = r"(?:«[^«»\n]*(?:«[^«»\n]*»[^«»\n]*)*»|\"[^\"\n]*\"|“[^”\n]*”|„[^“”\n]*[“”])"
+QUOTED = re.compile(r"(?<![\w'])(?:говор\w*|сказа\w*|написа\w*|пиш(?:ет|ут)|гласит|просит|"
+                    r"says|said|say|writes|wrote|reads|states|asks)\s*:?\s*(?:" + _QUOTES +
+                    r"|'[^'\n]*')|:\s*" + _QUOTES)
+
+
 def typed_lines(text):
     """The text a user typed, without what they pasted: fenced blocks and `>` quoted lines."""
     if len(text) > 2 * DETECT_EDGE:  # a pasted log: its middle is not an order, and regexes
@@ -453,7 +627,7 @@ def typed_lines(text):
 
 def detect(text):
     """Actions a typed message orders. Conservative: when in doubt, nothing."""
-    text = PAIR.sub(r"\1, ", URL.sub(" ", normalize_text(typed_lines(text))))
+    text = PAIR.sub(r"\1, ", URL.sub(" ", QUOTED.sub(" ", normalize_text(typed_lines(text)))))
     found = set()
     for sent in sentences(text):
         sent = " ".join(sent.split())  # one space between words keeps SPLIT linear
@@ -507,6 +681,51 @@ def detect(text):
         if no_push:  # «залей в мейн, но не пушь»: the merge stays local
             found -= {"push", "force"} - at_start
     return found
+
+
+# a task named in a message: a tracker link, a KEY-123 key, #123, or a tracker id such as
+# 86c1x2y3z — not a PR, a commit, a code or a doc link, nor «PR #45»
+TASK_REF = re.compile(r"(?<![\w-])(?i:(?:pr|пр|пулл?\w*|pull(?:\s+request)?|mr|мр|merge\s+request|коммит\w*|"
+                      r"commit)\s*)?(?:[a-z][a-z0-9+.-]{0,15}://\S+|(?<![\w-])(?:[A-Z][A-Z0-9]{1,9}-"
+                      r"\d+|#\d+|\d(?=[0-9a-z]*[a-z])[0-9a-z]{4,11})(?![\w-]))")
+NOT_TASK_URL = re.compile(r"/(?:pulls?|merge_requests|commits?|compare|blob|tree|actions|runs|"
+                          r"releases)(?:/|$)", re.I)
+
+
+def status_refs(text):
+    """The tasks a typed status command names: links and ids, as written."""
+    refs = set()
+    for m in TASK_REF.finditer(typed_lines(text or "")):
+        ref = m.group(0)
+        if re.match(r"(?i)(?:pr|пр|пул|pull|mr|мр|merge|коммит|commit)", ref) and \
+                not re.match(r"(?i)[a-z][a-z0-9+.-]{0,15}://", ref):
+            continue  # «PR #45», «коммит 3fa9c1d»
+        ref = ref.rstrip(".,;:!?)»\"'")
+        if "://" in ref and (NOT_TASK_URL.search(ref) or not (
+                TRACKER_SERVER.search(ref) or TRACKER_PATH.search(ref) or
+                re.search(r"/(?:browse|issues?|tasks?|t)/[\w-]+", ref))):
+            continue  # a PR, a commit, a doc: no task
+        refs.add(ref)
+    return refs
+
+
+def status_grants(text):
+    """How many status changes a typed status command covers: one per task it names (a link or
+    an id), at least one — «переведи 86abc1 и 86abc2 в ревью» is two; «переведи задачи в ревью»
+    names none and is one, so the next task is asked about."""
+    return max(1, len(status_refs(text)))
+
+
+def ref_matches(ref, targets):
+    """Whether a status call that names `targets` (its task ids) changes the task `ref` names:
+    the same id, `#12` and 12, or an id that is a segment of the link."""
+    r = ref.lower()
+    parts = {p for p in re.split(r"[/?#&=]+", r) if p}
+    for t in targets:
+        t = str(t).lower().lstrip("#")
+        if t and (t == r.lstrip("#") or t in parts):
+            return True
+    return False
 
 
 def normalize_comment(s):
@@ -734,6 +953,8 @@ def executed(block, call=None):
     call = call or {}
     if call.get("name") in {"Bash", "Monitor"}:
         return not error_is_own((call.get("input") or {}).get("command") or "")
+    if call.get("name") == "PowerShell":
+        return True  # its failures are not read: a failed PowerShell call used its command up
     if str(call.get("name", "")).startswith("mcp__"):
         return not REFUSED.search(text.split("\n", 1)[0][:300])
     return False
@@ -807,6 +1028,12 @@ def read_authorization(transcript_path, cwd):
     typed = detect(text) if text else set()
     actions = set(typed)
     approved, used, unseen = set(), set(), set()
+    # status grants: the tasks a typed status command named, each changed once; or, when it
+    # named none (or an option carried [status]), one change of any task
+    refs, open_status = set(), False
+    if "status" in typed:
+        refs = status_refs(text)
+        open_status = not refs
     shown = unprefix(normalize_comment("\n".join(
         blocks_text(e["message"].get("content")) for e in after if e.get("type") == "assistant")))
     calls, replay = {}, {"replay": True}
@@ -814,9 +1041,13 @@ def read_authorization(transcript_path, cwd):
         if is_queued(entry):  # queued mid-turn: adds its orders, or holds everything back
             text = queued_text = human_text(entry)
             if revokes(queued_text):  # it voids every command so far and grants nothing itself
-                actions, approved, typed = set(), set(), set()
+                actions, approved, typed, refs, open_status = set(), set(), set(), set(), False
                 continue
             granted = detect(queued_text)
+            if "status" in granted:  # adds to what the earlier message named
+                named = status_refs(queued_text)
+                refs |= named
+                open_status = open_status or not named
             actions |= granted
             typed |= granted
             continue
@@ -828,6 +1059,8 @@ def read_authorization(transcript_path, cwd):
                     if b.get("name") == "Skill" and re.search(
                             r"(?:^|:)ticket$", str((b.get("input") or {}).get("skill", ""))):
                         actions -= typed  # the model invoked /ticket: earlier typing is void
+                        if "status" in typed:
+                            refs, open_status = set(), False
                         typed = set()
         elif entry.get("type") == "user" and isinstance(content, list):
             for b in content:
@@ -837,7 +1070,14 @@ def read_authorization(transcript_path, cwd):
                         continue
                     for item in classify(call.get("name", ""), call.get("input") or {}, cwd,
                                          state=replay):
-                        if item[0] in CONSUMED_BY_USE:
+                        if item[0] == "status":
+                            hit = next((r for r in sorted(refs) if ref_matches(
+                                r, item[2] if len(item) > 2 else [])), None)
+                            if hit:
+                                refs.discard(hit)  # that named task is done
+                            else:
+                                open_status = False
+                        elif item[0] in CONSUMED_BY_USE:
                             actions.discard(item[0])
                         elif item[0] == "base-sync" and "merge-local" not in actions:
                             actions.discard("commit")  # under merge-local it is part of the merge
@@ -848,10 +1088,19 @@ def read_authorization(transcript_path, cwd):
             answer = entry.get("toolUseResult")
             if isinstance(answer, dict) and isinstance(answer.get("answers"), dict):
                 granted, ok, missed = read_answers(answer, shown)
+                open_status = open_status or "status" in granted
                 actions |= granted
                 approved |= ok
                 unseen |= missed
+    global STATUS_LEFT
+    STATUS_LEFT = (frozenset(refs), open_status)
+    actions.discard("status")
+    if refs or open_status:
+        actions.add("status")
     return text, actions, approved, used, unseen, (failure if human is None else None)
+
+
+STATUS_LEFT = None  # (task refs a status command named and not yet changed, one open change)
 
 
 def read_answers(result, shown):
@@ -880,6 +1129,7 @@ def read_answers(result, shown):
                 tag = tag.lower()
                 if tag in TAGS:
                     granted.add(TAGS[tag])
+                    granted |= TAG_ALSO.get(tag, set())
                     continue
                 if tag in LABEL_OBJECTS:
                     granted |= {a for a, rx in LABEL_OBJECTS[tag].items()
@@ -943,16 +1193,19 @@ def split_segments(command):
     return segments
 
 
-def raw_scan(command, cwd, depth):
+def raw_scan(command, cwd, depth, gh_env=None):
     """Conservative fallback: every git/gh word anywhere, parsed up to the next separator."""
     found = []
+    # `--body "$(cat <file>)"` stays one word: the PR body check reads it as that file
+    command = re.sub(r"[\"']?\$\(\s*cat\s+(?:--\s+)?['\"]?([^\s'\"()$`;&|<>]+)['\"]?\s*\)[\"']?",
+                     lambda m: "\0cat:" + m.group(1), command)
     for m in GITISH.finditer(command):
         rest = re.split(r"[;&|\n)`]", command[m.end():], 1)[0]
         args = rest.replace("'", " ").replace('"', " ").split()
         if m.group(1).lower() == "git":
             found += classify_git(args, cwd, depth + 1, {})
         else:
-            found += classify_gh(args, cwd)
+            found += classify_gh(args, cwd, env=gh_env)
     return found
 
 
@@ -1005,8 +1258,9 @@ def expand_flags(args, sub=None):
 PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
 
-def push_kind(rest, cwd=None, dash_c=None, look=True):
-    """"push", "force" (rewrites or targets a base branch) or None (a dry run)."""
+def push_kind(rest, cwd=None, dash_c=None, look=True, branch=None):
+    """"push", "force" (rewrites or targets a base branch) or None (a dry run). `branch`: the
+    branch an earlier `git switch` of the same command moved to."""
     rest = expand_flags(rest, "push")
     flags = [a for a in rest if a.startswith("-")]
     if {"--dry-run", "-n"} & set(flags):
@@ -1023,15 +1277,84 @@ def push_kind(rest, cwd=None, dash_c=None, look=True):
             skip = True
         elif not a.startswith("-"):
             positional.append(a)
+    repo_opt = option_value(rest, ["--repo"])
+    if repo_opt and not positional:
+        positional = [repo_opt]
     bases = base_set(cwd, dash_c) if look else BASE_BRANCHES
     for spec in positional[1:]:
         dst = spec.split(":", 1)[-1]
         if spec.startswith(("+", ":")) or dst.replace("refs/heads/", "") in bases:
             return "force"
-    if look and all(p in {"HEAD", "@"} for p in positional[1:]) and \
-            git_query(["symbolic-ref", "-q", "--short", "HEAD"], cwd, dash_c) in bases:
+    if not look:
+        return "push"
+    head = branch or git_query(["symbolic-ref", "-q", "--short", "HEAD"], cwd, dash_c)
+    if all(p in {"HEAD", "@"} for p in positional[1:]) and head in bases:
         return "force"  # no destination named and the checkout is on the base branch
+    if any(names_base(d, bases) or d == "*" for d in configured_destinations(
+            positional[:1], positional[1:], head, cwd, dash_c)):
+        return "force"  # the repository's own settings send this push to a base branch
     return "push"
+
+
+def git_config_all(key, cwd, dash_c):
+    out = git_query(["config", "--get-all", key], cwd, dash_c)
+    return out.split("\n") if out else []
+
+
+def refspec_map(src, spec, head=None):
+    """Where the push refspec `spec` (`refs/heads/*:refs/heads/*`, `HEAD:main`) sends `src`, or
+    None when it does not match it. `HEAD` on the left is the branch `head`."""
+    left, _, right = spec.lstrip("+").partition(":")
+    right = right or left
+    full = src if src.startswith("refs/") else "refs/heads/" + src
+    if "*" in left:
+        pre, _, post = left.partition("*")
+        if full.startswith(pre) and full.endswith(post) and len(full) >= len(pre) + len(post):
+            return right.replace("*", full[len(pre):len(full) - len(post) or None], 1)
+        return None
+    if left in {"HEAD", "@"}:
+        return (src if right in {"HEAD", "@"} else right) if src == head else None
+    if left in {src, full}:
+        return right
+    return None
+
+
+def configured_destinations(remote, refspecs, head, cwd, dash_c):
+    """The branches a push without an explicit destination updates under the repository's own
+    settings: remote.<r>.push (any refspec, `+` and wildcards that reach other branches count as
+    "*"), else push.default with branch.<b>.merge — `upstream`, `simple`, `tracking` send the
+    branch to its upstream, `matching` to every branch of the same name ("*"). A refspec named
+    without `:<dst>` is mapped through remote.<r>.push the same way."""
+    if not head:
+        return set()
+    remote = remote[0] if remote else (
+        git_query(["config", "--get", f"branch.{head}.pushRemote"], cwd, dash_c) or
+        git_query(["config", "--get", "remote.pushDefault"], cwd, dash_c) or
+        git_query(["config", "--get", f"branch.{head}.remote"], cwd, dash_c) or "origin")
+    mapped = git_config_all(f"remote.{remote}.push", cwd, dash_c) if \
+        re.fullmatch(r"[\w./-]+", remote) and "://" not in remote else []
+    out = set()
+    srcs = [s.split(":", 1)[0] for s in refspecs if ":" not in s] or ([] if refspecs else [head])
+    if mapped:
+        for spec in mapped:
+            if spec.startswith("+") or spec.startswith(":") or (
+                    "*" in spec and not refspecs):
+                out.add("*")  # a forced, deleting or all-branches refspec
+            for src in srcs:
+                dst = refspec_map(head if src in {"HEAD", "@"} else src, spec, head)
+                if dst:
+                    out.add(re.sub(r"^refs/heads/", "", dst))
+        return out
+    if refspecs:
+        return out
+    mode = (git_query(["config", "--get", "push.default"], cwd, dash_c) or "simple").lower()
+    if mode == "matching":
+        return {"*"}
+    if mode in {"upstream", "tracking", "simple"}:
+        merge = git_query(["config", "--get", f"branch.{head}.merge"], cwd, dash_c)
+        if merge:
+            out.add(re.sub(r"^refs/heads/", "", merge))
+    return out
 
 
 def default_branch(cwd, dash_c):
@@ -1072,31 +1395,128 @@ def run_base_branches():
     return found
 
 
+# settings that decide where a push goes or what a git word runs — writing one is tampering, and a
+# one-off `git -c` of the push ones is opaque
+CONFIG_TAMPER = re.compile(
+    r"^(?:remote\.(?:.+\.(?:push|url|pushurl|mirror)|pushdefault)|branch\..+\.(?:merge|remote|"
+    r"pushremote)|alias\..+|core\.hookspath|include\..+|includeif\..+|"
+    r"url\..+\.(?:insteadof|pushinsteadof)|push\.default)$")
+CONFIG_SECTION = re.compile(r"^(?:remote|branch|alias|include|includeif|url|push)(?:\.|$)")
+PUSH_CONFIG = re.compile(r"^(?:remote\.|branch\.|url\.|push\.default$)")
+# settings that run a program, redefine a git word or redirect a remote: a one-off `git -c` of
+# one is opaque whatever the subcommand (`git -c core.editor='sh -c "git push"' commit`)
+RUNS_CONFIG = re.compile(
+    r"^(?:core\.(?:editor|sshcommand|fsmonitor|hookspath|pager|askpass|gitproxy|"
+    r"alternaterefscommand)|sequence\.editor|alias\..+|remote\..+|url\..+|include\..+|"
+    r"includeif\..+|credential\..*helper|gpg\.(?:.+\.)?program|diff\.(?:external|.+\.(?:command|"
+    r"textconv))|(?:diff|merge)tool\..+\.(?:cmd|path)|merge\..+\.driver|filter\..+|"
+    r"pager\..+|uploadpack\..+|receivepack\..+|protocol\..+|ssh\.variant|"
+    r"submodule\..+\.update|interactive\.difffilter|web\.browser|browser\..+\.(?:cmd|path)|"
+    r"sendemail\..+|man\..+\.(?:cmd|path))$")
+# subcommands that push, or run git commands that inherit `-c` (submodule foreach)
+PUSHING_SUBS = {"push", "send-pack", "http-push", "subtree", "lfs", "submodule"}
+CONFIG_OPTS_WITH_VALUE = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value",
+                          "-t"}
+CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list",
+               "--get-color", "--get-colorbool", "--show-origin", "--show-scope"}
+CONFIG_WRITE = {"--add", "--unset", "--unset-all", "--replace-all", "--rename-section",
+                "--remove-section", "-e", "--edit"}
+
+
+def config_tamper(args):
+    """`git config` writing a setting that redirects a push or redefines a git word
+    (remote.*.push/url, branch.*.merge/remote, alias.*, core.hooksPath, include.*, url.*.insteadOf,
+    push.default), or `git remote add` / `set-url` / `rename` / `set-head`. Reads pass."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in GIT_OPTS_WITH_VALUE else 1
+    if i >= len(args):
+        return False
+    sub, rest = args[i], args[i + 1:]
+    if sub == "remote":
+        return bool(rest) and rest[0] in {"set-url", "rename", "add", "set-head", "set-branches"}
+    if sub != "config":
+        return False
+    write, positional, skip = False, [], False
+    if rest and rest[0] in {"set", "unset", "rename-section", "remove-section", "edit"}:
+        write, rest = True, rest[1:]
+        if not rest or rest[0] == "edit":
+            return True
+    elif rest and rest[0] in {"get", "list", "get-color", "get-colorbool"}:
+        return False
+    for a in rest:
+        if skip:
+            skip = False
+        elif a.split("=", 1)[0] in CONFIG_OPTS_WITH_VALUE and "=" not in a:
+            skip = True
+        elif a in {"-e", "--edit"}:
+            return True
+        elif a in CONFIG_READ:
+            return False
+        elif a in CONFIG_WRITE:
+            write = True
+        elif not a.startswith("-"):
+            positional.append(a)
+    if not positional or not (write or len(positional) >= 2):
+        return False
+    key = positional[0].lower()
+    return bool(CONFIG_TAMPER.match(key) or RUNS_CONFIG.match(key) or CONFIG_SECTION.match(key) and
+                ({"--rename-section", "--remove-section"} & set(rest) or
+                 args[i + 1:i + 2] in (["rename-section"], ["remove-section"])))
+
+
 def git_ref(arg, cwd, dash_c):
     return bool(git_query(["rev-parse", "-q", "--verify", "--end-of-options", arg + "^{commit}"],
                           cwd, dash_c))
 
 
 def classify_git(args, cwd, depth, inline, state=None):
+    """What `git <args>` does, and opaque when it writes files at a path the guard cannot read
+    (git_file_writes)."""
+    found = classify_git_words(args, cwd, depth, inline, state)
+    unread = git_file_writes(args, cwd)[1]
+    if unread:
+        found.append(("opaque", f"`git {unread[:80]}`: files written at a path the guard cannot "
+                                "read"))
+    return found
+
+
+def classify_git_words(args, cwd, depth, inline, state=None):
     """What `git <args>` does. `state` carries the branch an earlier `git switch` / `git
     checkout` of the same command moved to."""
     state = {} if state is None else state
-    dash_c, i = None, 0
+    dash_c, push_config, runs_config, i = None, None, None, 0
     while i < len(args) and args[i].startswith("-"):
         opt = args[i].split("=", 1)[0]
-        if opt in GIT_OPTS_WITH_VALUE and "=" not in args[i]:
-            if opt == "-C" and i + 1 < len(args):
-                dash_c = args[i + 1]
-            if opt == "-c" and i + 1 < len(args):
-                m = re.match(r"alias\.([^=]+)=(.*)$", args[i + 1], re.S)
-                if m:
-                    inline = dict(inline, **{m.group(1): m.group(2)})
-            i += 2
+        if opt in GIT_OPTS_WITH_VALUE:
+            value = args[i].split("=", 1)[1] if "=" in args[i] and opt.startswith("--") else (
+                args[i + 1] if i + 1 < len(args) else "")
+            if opt == "-C":
+                dash_c = value
+            if opt == "--exec-path" and "=" in args[i]:
+                runs_config = args[i]  # git's own programs taken from another directory
+            if opt in {"-c", "--config-env"}:
+                key, _, setting = value.partition("=")
+                key = key.lower()
+                if RUNS_CONFIG.match(key) and not (opt == "-c" and benign_program(key, setting)):
+                    runs_config = value
+                elif PUSH_CONFIG.match(key):
+                    push_config = value
+            i += 1 if "=" in args[i] and opt.startswith("--") else 2
         else:
             i += 1
     if i >= len(args):
         return []
     sub, rest = args[i], args[i + 1:]
+    if runs_config:
+        # a one-off setting that runs a program, redefines a git word or redirects a remote
+        return [("opaque", f"`git {'-c ' * (not runs_config.startswith('--'))}{runs_config[:60]} "
+                           f"{sub}`: a one-off setting that runs a program, defines an alias or "
+                           "changes a remote")]
+    if push_config and (sub not in GIT_BUILTINS or sub in PUSHING_SUBS):
+        # a one-off setting that changes where a push goes; a fetch or a switch it leaves alone
+        return [("opaque", f"`git -c {push_config[:60]} {sub}`: a one-off setting that changes "
+                           "where a push goes")]
     if "$" in sub or "`" in sub:
         return [("opaque", f"`git {sub} …`: a git subcommand built from a variable or a "
                            "substitution")]
@@ -1107,6 +1527,20 @@ def classify_git(args, cwd, depth, inline, state=None):
                 return classify_shell(alias[1:] + " " + " ".join(shlex.quote(a) for a in rest),
                                       cwd, depth + 1)
             return classify_git(shlex.split(alias) + rest, cwd, depth + 1, inline, state)
+    carried = carried_commands(sub, rest)
+    callback = next((a for a in rest if sub == "filter-repo" and re.match(
+        r"^--\w[\w-]*-callback(?:=|$)", a)), None)
+    if callback:  # Python run for each commit, blob or ref: it may call git or gh itself
+        return [("opaque", f"`git filter-repo {callback[:40]} …` runs code of its own for each "
+                           "commit, blob or ref")]
+    if any(classify_shell(c, cwd, depth + 1) for c in carried):
+        # `git rebase -x 'git push'`, `git submodule foreach git push`, `git bisect run …`: the
+        # command runs once per commit, submodule or step, beyond what one grant covers
+        return [("opaque", f"`git {sub} …` runs a git or gh write of its own "
+                           f"(`{carried[0][:60]}`) once per commit, submodule or step")]
+    if sub == "submodule" and "foreach" in rest or sub == "bisect" and "run" in rest[:1] or \
+            sub in {"difftool", "mergetool"}:
+        return []
     flags = set(expand_flags(rest, sub))
     before_dashdash = rest[:rest.index("--")] if "--" in rest else rest
     after_dashdash = rest[rest.index("--") + 1:] if "--" in rest else []
@@ -1130,14 +1564,12 @@ def classify_git(args, cwd, depth, inline, state=None):
                 return [("merge-local", f"git commit concluding a merge into {head}")]
         return [("commit", f"git {sub}")]
     if sub == "push":
-        kind = push_kind(rest, cwd, dash_c)
+        kind = push_kind(rest, cwd, dash_c, branch=state.get("branch"))
         label = "git push (force, delete, all/tags/mirror or to the base branch)" \
             if kind == "force" else "git push"
         return [(kind, label)] if kind else []
     if sub in {"send-pack", "http-push", "send-email"}:
         return [("push", f"git {sub}")]
-    if sub == "submodule" and "foreach" in rest:
-        return classify_shell(" ".join(rest[rest.index("foreach") + 1:]), cwd, depth + 1)
     if sub in {"subtree", "lfs"} and "push" in rest:
         return [("push", f"git {sub} push")]
     if sub == "pull" and len(positional) >= 2 and not any(":" in r for r in positional[1:]):
@@ -1163,11 +1595,15 @@ def classify_git(args, cwd, depth, inline, state=None):
                 re.match(r"^(?:HEAD[~^]\S*|@[~^]\S*|[0-9a-f]{7,40}|origin/\S+|@\{\S+\})$", a)
                 or (a not in {"HEAD", "@"} and git_ref(a, cwd, dash_c)) for a in positional):
             return [("history", "git reset")]
-    if sub == "branch" and flags & {"-D", "-f", "--force", "-M", "-C"}:
-        return [("history", "git branch (force/delete)")]
+    if sub == "branch" and flags & {"-d", "-D", "--delete"}:
+        return [("branch-delete", "git branch --delete")]
+    if sub == "branch" and flags & {"-f", "--force", "-M", "-C"}:
+        return [("history", "git branch (force move, rename or copy over)")]
     if sub == "checkout" and flags & {"-B"} or sub == "switch" and flags & {"-C",
                                                                           "--force-create"}:
         return [("history", f"git {sub} (reset a branch)")]
+    if sub == "worktree" and positional[:1] == ["remove"] and flags & {"-f", "--force"}:
+        return [("history", "git worktree remove --force (drops uncommitted work)")]
     if sub == "stash":
         action = rest[0] if rest and not rest[0].startswith("-") else "push"
         if action in {"drop", "clear", "pop", "apply", "branch"}:
@@ -1190,6 +1626,42 @@ def classify_git(args, cwd, depth, inline, state=None):
             not flags & {"-S", "--staged"} or flags & {"-W", "--worktree"}):
         return [("history", "git restore (discards changes)")]
     return []
+
+
+# git options whose value is a command git runs: `rebase -x`, `difftool -x`, `grep -O`,
+# `fetch --upload-pack`, `push --receive-pack`
+CARRIER_OPTS = {
+    "rebase": {"-x", "--exec"}, "difftool": {"-x", "--extcmd"}, "mergetool": {"-x", "--extcmd"},
+    "grep": {"-O", "--open-files-in-pager"},
+    "fetch": {"--upload-pack"}, "pull": {"--upload-pack"}, "clone": {"-u", "--upload-pack"},
+    "ls-remote": {"--upload-pack"}, "archive": {"--exec"}, "push": {"--receive-pack", "--exec"},
+    "submodule": set(),
+    "filter-branch": {"--tree-filter", "--index-filter", "--msg-filter", "--env-filter",
+                      "--commit-filter", "--parent-filter", "--tag-name-filter", "--setup"},
+}
+
+
+def carried_commands(sub, rest):
+    """Commands a git subcommand runs for itself: the values of CARRIER_OPTS, what follows
+    `submodule foreach` and `bisect run`."""
+    out, opts = [], CARRIER_OPTS.get(sub, set())
+    for j, a in enumerate(rest):
+        name, eq, value = a.partition("=")
+        if name in opts and name.startswith("--") and eq:
+            out.append(value)
+        elif a in opts and j + 1 < len(rest):
+            out.append(rest[j + 1])
+        elif a[:2] in opts and len(a) > 2 and not a.startswith("--"):
+            out.append(a[2:])  # `-x'git push'`, `-Ocmd`
+    if sub == "submodule" and "foreach" in rest:
+        tail = rest[rest.index("foreach") + 1:]
+        while tail and tail[0] in {"--recursive", "-q", "--quiet"}:
+            tail = tail[1:]
+        if tail:
+            out.append(" ".join(tail))
+    if sub == "bisect" and rest[:1] == ["run"] and len(rest) > 1:
+        out.append(" ".join(shlex.quote(a) for a in rest[1:]))
+    return out
 
 
 def classify_integration(sub, rest, positional, cwd, dash_c, state):
@@ -1260,6 +1732,104 @@ def read_body(args, cwd, body_names, file_names):
     return None
 
 
+def approved_pr_body():
+    """(path, text) of this session's approved PR body, <run_dir>/PR-BODY.md, or (None, None)."""
+    if not RUN_DIR:
+        return None, None
+    path = os.path.join(RUN_DIR, "PR-BODY.md")
+    try:
+        with open(path, "rb") as f:
+            return path, f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None, None
+
+
+CAT_FILE = re.compile(r"^\$\(\s*cat\s+(?:--\s+)?(['\"]?)([^\s'\"()$`;&|<>]+)\1\s*\)$")
+
+
+RUN_PR_HASH = re.compile(r"^[ \t>*-]*`?pr_body_sha256`?\s*:\s*`?([0-9a-fA-F]{64})\b", re.M)
+BODY_CHECKS = 0  # PR body checks made so far: classify() asks whether a call made one
+
+
+def approved_pr_hash():
+    """The last `pr_body_sha256:` in this session's RUN.md: the hash of PR-BODY.md as the user
+    approved it at the gate, or None."""
+    if not RUN_DIR:
+        return None
+    try:
+        with open(os.path.join(RUN_DIR, "RUN.md"), encoding="utf-8", errors="replace") as f:
+            found = RUN_PR_HASH.findall(f.read(1 << 20))
+    except OSError:
+        return None
+    return found[-1].lower() if found else None
+
+
+def pr_body_issue(text=None, file=None, cwd=None):
+    """Why a PR body is not the approved <run_dir>/PR-BODY.md, or None when it is: the file
+    itself (`--body-file`, `body=@file`, `"$(cat file)"`), or text equal to it byte for byte —
+    trailing line breaks aside, and a line break may reach here as " ; " from the shell parser.
+    The file is the approved one only while its sha256 is the `pr_body_sha256:` that RUN.md
+    recorded when the user approved it."""
+    global BODY_CHECKS
+    BODY_CHECKS += 1
+    if text is not None and file is not None:  # `--body-file <approved> --body other`: both
+        return pr_body_issue(text, None, cwd) or pr_body_issue(None, file, cwd)
+    if text is not None and CAT_FILE.match(text):
+        text, file = None, CAT_FILE.match(text).group(2)
+    elif text is not None and text.startswith("\0cat:"):  # the same, as raw_scan hands it over
+        text, file = None, text[5:]
+    path, approved = approved_pr_body()
+    if path is None:
+        return "this session's run has no PR-BODY.md"
+    recorded = approved_pr_hash()
+    if recorded is None:
+        return ("RUN.md records no `pr_body_sha256:` — after the user approves PR-BODY.md, add "
+                "`pr_body_sha256: <sha256 of PR-BODY.md>` (`shasum -a 256 PR-BODY.md`) to RUN.md")
+    with open(path, "rb") as f:
+        actual = hashlib.sha256(f.read()).hexdigest()
+    if actual != recorded:
+        return ("PR-BODY.md changed since the user approved it (its sha256 is not RUN.md's "
+                "`pr_body_sha256:`) — show the new text and have it approved again")
+    if file is not None:
+        if file == "-":
+            return "a body read from stdin cannot be checked"
+        where = os.path.realpath(os.path.join(cwd or os.getcwd(), os.path.expanduser(file)))
+        if where == os.path.realpath(path):
+            return None
+        try:
+            with open(where, "rb") as f:
+                text = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return f"the body file {file} cannot be read"
+    if text is None:
+        return "the body does not come from PR-BODY.md"
+    # a shell command's line breaks reach here as " ; " (split_segments reads lines as commands)
+    if text in {approved, approved.rstrip("\n"), approved.replace("\n", " ; "),
+                approved.rstrip("\n").replace("\n", " ; ")}:
+        return None
+    return "the body differs from the approved PR-BODY.md"
+
+
+def pr_body_check(what, args, cwd):
+    """A ("pr-body", reason) item when a gh PR body is not the approved PR-BODY.md. --web leaves
+    the body to the user in the browser."""
+    if {"-w", "--web"} & set(args):
+        return []
+    text = option_value(args, ["--body", "-b"])
+    file = option_value(args, ["--body-file", "-F"])
+    issue = pr_body_issue(text, file, cwd)
+    return [("pr-body", f"{what}: {issue}")] if issue else []
+
+
+def mcp_pr_body(name, inp):
+    for key in ("body", "description"):
+        if isinstance(inp.get(key), str):
+            issue = pr_body_issue(inp[key])
+            return [("pr-body", f"{name}: {issue}")] if issue else []
+    return [("pr-body", f"{name}: the body does not come from PR-BODY.md")] if \
+        "create" in split_words(name) else []
+
+
 # gh groups that change a repository, its secrets or CI → the repo-admin kind each one is
 GH_ADMIN_GROUPS = {"secret": "secrets", "variable": "secrets", "environment": "secrets",
                    "deploy-key": "secrets", "ssh-key": "secrets", "gpg-key": "secrets",
@@ -1287,10 +1857,94 @@ def api_admin_kind(endpoint):
     return "repo-admin-settings"
 
 
-def classify_gh(args, cwd, push_read=False):
+# gh's own commands: an alias never overrides one of them
+GH_COMMANDS = {"agent-task", "alias", "api", "attestation", "auth", "browse", "cache", "co",
+               "codespace", "completion", "config", "extension", "gist", "gpg-key", "help",
+               "issue", "label", "org", "pr", "preview", "project", "release", "repo", "ruleset",
+               "run", "search", "secret", "ssh-key", "status", "variable", "version", "workflow",
+               "copilot", "accessibility"}
+
+
+GH_ENV = {"GH_CONFIG_DIR", "XDG_CONFIG_HOME"}  # where gh reads config.yml (and its aliases)
+
+
+def gh_config_file(env=None):
+    env = {**os.environ, **(env or {})}
+    base = env.get("GH_CONFIG_DIR") or (
+        os.path.join(env["XDG_CONFIG_HOME"], "gh") if env.get("XDG_CONFIG_HOME")
+        else os.path.join(env.get("APPDATA", ""), "GitHub CLI") if os.name == "nt"
+        else os.path.expanduser("~/.config/gh"))
+    return os.path.join(base, "config.yml")
+
+
+def gh_env_of(assignments, cwd, into=None):
+    """GH_CONFIG_DIR / XDG_CONFIG_HOME among (name, value) pairs (names without case, as
+    Windows reads them), as {name: path}; a value built at run time is kept with its `$`."""
+    env = dict(into or {})
+    for name, value in assignments:
+        if name.upper() in GH_ENV:
+            env[name.upper()] = value if re.search(r"[$`%!]", value) or not value else \
+                (resolve_path(value, cwd) or value)
+    return env
+
+
+def gh_alias(name, env=None):
+    """The expansion of a gh alias (`gh alias set p 'pr merge'` → "pr merge"), from the
+    `aliases:` block of gh's config.yml, or None. A value the guard cannot read is "!" — a shell
+    alias it cannot see."""
+    text = read_text(gh_config_file(env), None) or ""
+    block = re.search(r"^aliases:[ \t]*\n((?:[ \t]+.*\n?|[ \t]*\n)*)", text, re.M)
+    if not block:
+        return None
+    for line in block.group(1).splitlines():
+        m = re.match(r"^[ \t]+(['\"]?)([^:'\"]+)\1:[ \t]*(.*)$", line)
+        if m and m.group(2).strip() == name:
+            value = m.group(3).strip()
+            if value[:1] in {"'", '"'} and value[-1:] == value[:1] and len(value) > 1:
+                value = value[1:-1].replace("''", "'") if value[0] == "'" else \
+                    value[1:-1].encode().decode("unicode_escape", errors="replace")
+            return "!" if value[:1] in {"|", ">", ""} else value
+    return None
+
+
+def expand_gh_alias(alias, args):
+    """An alias's words with `$1`, `$2` … filled from `args`; the rest of `args` follows."""
+    used, out = set(), []
+    for w in shlex.split(alias):
+        m = re.fullmatch(r"\$(\d+)", w)
+        if m and 0 < int(m.group(1)) <= len(args):
+            used.add(int(m.group(1)) - 1)
+            out.append(args[int(m.group(1)) - 1])
+        else:
+            out.append(w)
+    return out + [a for k, a in enumerate(args) if k not in used]
+
+
+def classify_gh(args, cwd, push_read=False, depth=0, env=None):
+    """`env`: GH_CONFIG_DIR / XDG_CONFIG_HOME the same command sets for gh (gh_env_of)."""
     rest = list(args)
     while rest and rest[0].startswith("-"):
         rest = rest[2:] if rest[0] in {"-R", "--repo", "--hostname"} else rest[1:]
+    if rest and rest[0] not in GH_COMMANDS and depth < 3:
+        moved = sorted(k for k in env or {} if k in GH_ENV)
+        unread = any(re.search(r"[$`%!]", env[k]) or not env[k] for k in moved)
+        alias = None if unread else gh_alias(rest[0], env)
+        if moved and alias is None:  # the config may be written in this very command
+            return [("opaque", f"`gh {rest[0]}` with {moved[0]} set: an alias from a config "
+                               "the guard cannot read")]
+        if alias == "!":
+            return [("opaque", f"`gh {rest[0]}`: a shell alias the guard cannot read")]
+        if alias and alias.startswith("!"):  # gh runs it with sh
+            return classify_shell(alias[1:] + " " + " ".join(shlex.quote(a) for a in rest[1:]),
+                                  cwd, depth + 1)
+        if alias:
+            try:
+                return classify_gh(expand_gh_alias(alias, rest[1:]), cwd, push_read, depth + 1,
+                                   env)
+            except ValueError:
+                return [("opaque", f"`gh {rest[0]}`: an alias the guard cannot read")]
+    if rest[:2] in (["alias", "set"], ["alias", "import"]):
+        return gh_alias_set(rest[2:], cwd)
     if len(rest) < 2:
         return []
     group, verb, tail = rest[0], rest[1], rest[2:]
@@ -1299,7 +1953,7 @@ def classify_gh(args, cwd, push_read=False):
     if "--push" in tail and not push_read:
         # `--push` may also be another flag's value (`--subject --push`): the command keeps
         # its own class too
-        return [("push", f"gh {group} {verb} --push")] + classify_gh(args, cwd, True)
+        return [("push", f"gh {group} {verb} --push")] + classify_gh(args, cwd, True, depth)
     if group == "release" and verb in {"create", "upload", "edit"}:
         return [("publish-release", f"gh release {verb}")]
     if group == "gist" and verb in {"create", "edit", "rename"}:
@@ -1328,7 +1982,10 @@ def classify_gh(args, cwd, push_read=False):
     if group == "issue" and verb == "create":
         return [("create-task", "gh issue create")]
     if group == "pr" and verb == "create":
-        return [("pr", "gh pr create")]
+        return [("pr", "gh pr create")] + pr_body_check("gh pr create", tail, cwd)
+    if group == "pr" and verb == "edit" and {"-b", "--body", "-F", "--body-file"} & {
+            a.split("=", 1)[0] for a in tail}:
+        return [("tracker", "gh pr edit")] + pr_body_check("gh pr edit", tail, cwd)
     if group == "pr" and verb == "merge":
         return [("merge", "gh pr merge")]
     if verb in {"comment", "review"}:
@@ -1340,7 +1997,9 @@ def classify_gh(args, cwd, push_read=False):
     if verb == "delete":
         return [("destructive", f"gh {group} delete")]
     if group == "issue" and verb in {"close", "reopen"}:
-        found = [("status", f"gh issue {verb}")]
+        target = [a for j, a in enumerate(tail) if not a.startswith("-") and not (j and tail[
+            j - 1] in {"-R", "--repo", "-c", "--comment", "-r", "--reason"})][:1]
+        found = [("status", f"gh issue {verb}", target)]
     else:
         found = [("tracker", f"gh {group} {verb}")]
     comment = option_value(tail, ["--comment", "-c"])
@@ -1349,47 +2008,110 @@ def classify_gh(args, cwd, push_read=False):
     return found
 
 
+GH_FIELD_FLAGS = {"-f": False, "--raw-field": False, "-F": True, "--field": True}
+GH_API_VALUE_FLAGS = {"-X", "--method", "-H", "--header", "-f", "-F", "--field", "--raw-field",
+                      "--input", "-q", "--jq", "-t", "--template", "-p", "--preview",
+                      "--hostname", "--cache"}
+
+
+def gh_fields(tail):
+    """(name, value, typed) of each `gh api` field, in every spelling pflag takes: `-f k=v`,
+    `-fk=v`, `-if k=v`, `--field k=v`, `--field=k=v`. `typed` is -F/--field, which reads
+    `@file` and converts literals."""
+    out, j = [], 0
+    while j < len(tail):
+        a, field = tail[j], None
+        if a in GH_FIELD_FLAGS and j + 1 < len(tail):
+            field, typed = tail[j + 1], GH_FIELD_FLAGS[a]
+            j += 1
+        elif a.startswith("--") and a.split("=", 1)[0] in GH_FIELD_FLAGS and "=" in a:
+            field, typed = a.split("=", 1)[1], GH_FIELD_FLAGS[a.split("=", 1)[0]]
+        else:
+            m = re.match(r"^-i*([fF])(.+)$", a)  # -i (--include) is the only short boolean
+            if m:
+                field, typed = m.group(2), m.group(1) == "F"
+        if field is not None:
+            name, eq, value = field.partition("=")
+            out.append((name, value if eq else None, typed))
+        j += 1
+    return out
+
+
+def gh_api_endpoint(tail):
+    """The first argument of `gh api` that is not an option or an option's value."""
+    j = 0
+    while j < len(tail):
+        a = tail[j]
+        if a in GH_API_VALUE_FLAGS:
+            j += 2
+            continue
+        if not a.startswith("-") or a == "-":
+            return a
+        j += 1
+    return ""
+
+
+def gh_alias_set(args, cwd):
+    """`gh alias set <name> <expansion>`: an alias that names a gated write (`'pr merge'`, a
+    shell alias `!git push`) redefines a gh word the way `git config alias.p push` does; one the
+    guard cannot read (`gh alias import`, `--clobber` from stdin) counts too."""
+    words = [a for a in args if not a.startswith("-")]
+    if "--shell" in args or "-s" in args:
+        words[1:2] = ["!" + words[1]] if len(words) > 1 else []
+    if len(words) < 2 or words[1] == "-":
+        return [("tamper", "gh alias import / set from a file or stdin (redefines gh words)")]
+    expansion = words[1]
+    try:
+        found = classify_shell(expansion[1:], cwd, 1) if expansion.startswith("!") else \
+            classify_gh(shlex.split(expansion), cwd, depth=3)
+    except ValueError:
+        found = [("opaque", expansion)]
+    if found:
+        return [("tamper", f"gh alias set {words[0]} '{expansion[:40]}' (redefines a gh word as "
+                           "a gated write)")]
+    return []
+
+
 def classify_gh_api(tail, cwd):
     method = ""
     for i, a in enumerate(tail):
         m = re.match(r"^(?:-X|--method=?)(\w*)$", a)
         if m:
             method = (m.group(1) or (tail[i + 1] if i + 1 < len(tail) else "")).upper()
-    fields = [a for a in tail if a.split("=")[0] in {"-f", "-F", "--field", "--raw-field", "--input"}]
-    endpoint = next((a for a in tail if not a.startswith("-") and a.upper() != method), "")
+    fields = gh_fields(tail)
+    endpoint = gh_api_endpoint(tail)
     endpoint = re.sub(r"^https?://[^/]+/(?:api/v3/)?", "", endpoint)  # a full URL
-    if endpoint == "graphql":
-        queries = [a.split("=", 1)[1] for a in tail if a.startswith("query=")]
-        if "--input" not in tail and queries and all(
-                re.match(r"\s*(?:query\b[^{]*)?\{", q) and "mutation" not in q for q in queries):
-            return []
-        joined = " ".join(queries)
-        if re.search(r"\b(?:update|archive|unarchive|transfer|cloneTemplate)Repository\b", joined):
-            return [("repo-admin-settings", "gh api graphql (repository settings)")]
-        if re.search(r"\b(?:create|update|delete)(?:BranchProtectionRule|RepositoryRuleset)\b",
-                     joined):
-            return [("repo-admin-protection", "gh api graphql (branch protection)")]
-        if re.search(r"\bcreateRepository\b", joined):
-            return [("publish-repo", "gh api graphql (createRepository)")]
-        if any(re.search(r"(?:add|update)\w*comment", q, re.I) for q in queries):
-            return [("comment", "gh api graphql (comment)", None)]
-        return [("tracker", "gh api graphql")]
-    if method == "GET" or (not method and not fields):
+    if re.fullmatch(r"/*(?:api/)?graphql/*", endpoint):
+        return classify_graphql(tail, cwd)
+    if method == "GET" or (not method and not fields and not any(
+            a.split("=", 1)[0] == "--input" for a in tail)):
         return []
     method = method or "POST"
+    body, body_file, nested = None, None, False
+    for name, value, typed in fields:
+        if name == "body" and value is not None:  # `-F body=@file` reads the file
+            body, body_file = (None, value[1:]) if value.startswith("@") and typed else \
+                (value, None)
+        elif re.search(r"\[body\]", name):  # `-F x[body]=…`: a nested field of the same name
+            nested = True
     if "comments" in endpoint:
         if method == "DELETE":
             return [("delete", "gh api DELETE comment")]
-        body = None
-        for j, a in enumerate(tail):
-            if a in {"-f", "--raw-field", "-F", "--field"} and j + 1 < len(tail) \
-                    and tail[j + 1].startswith("body="):
-                body = tail[j + 1][5:]
         return [("comment", "gh api (comment)", body)]
     if re.search(r"/pulls/\d+/merge$", endpoint):
         return [("merge", "gh api merge")]
+    from_input = any(a.split("=", 1)[0] == "--input" for a in tail)
     if re.search(r"/pulls/?$", endpoint):
-        return [("pr", f"gh api {method} {endpoint}")]
+        issue = "a body read from --input" if from_input else \
+            "a body passed as a nested field" if nested else pr_body_issue(body, body_file, cwd)
+        return [("pr", f"gh api {method} {endpoint}")] + \
+            ([("pr-body", f"gh api {endpoint}: {issue}")] if issue else [])
+    if re.search(r"/pulls/\d+/?$", endpoint) and (body is not None or body_file is not None
+                                                     or from_input or nested):
+        issue = "a body read from --input" if from_input else \
+            "a body passed as a nested field" if nested else pr_body_issue(body, body_file, cwd)
+        return [("tracker", f"gh api {method} {endpoint}")] + \
+            ([("pr-body", f"gh api {endpoint}: {issue}")] if issue else [])
     if method == "POST" and re.search(r"/issues/?$", endpoint):
         return [("create-task", f"gh api POST {endpoint}")]
     if "/git/refs" in endpoint:
@@ -1408,6 +2130,176 @@ def classify_gh_api(tail, cwd):
             return [("publish-repo", f"gh api {method} {endpoint}")]
         return [(api_admin_kind(endpoint), f"gh api {method} {endpoint} (repository settings)")]
     return [("tracker", f"gh api {method}")]
+
+
+# GraphQL mutations by name → the class of the same write through gh or the REST API
+GRAPHQL_CLASSES = [
+    (re.compile(r"^(?:mergePullRequest|enablePullRequestAutoMerge|enqueuePullRequest|"
+                r"mergeBranch)$"), "merge"),
+    (re.compile(r"^createPullRequest$"), "pr"),
+    (re.compile(r"^(?:update|archive|unarchive|transfer|cloneTemplate)Repository$"),
+     "repo-admin-settings"),
+    (re.compile(r"^(?:create|update|delete)(?:BranchProtectionRule|RepositoryRuleset)$"),
+     "repo-admin-protection"),
+    (re.compile(r"^(?:createRepository|forkRepository)$"), "publish-repo"),
+    (re.compile(r"^deleteRepository$"), "destructive"),
+    (re.compile(r"^(?:createRef|updateRefs?|deleteRef)$"), "force"),
+    (re.compile(r"^createCommitOnBranch$"), "push"),
+    (re.compile(r"^createIssue$"), "create-task"),
+    (re.compile(r"^(?:deleteIssue|deleteProjectV2Item|deleteDiscussion)$"), "destructive"),
+    (re.compile(r"^(?:delete\w*Comment|deletePullRequestReviewComment)$"), "delete"),
+    (re.compile(r"^(?:add|update)\w*Comment\w*$|^addPullRequestReview\w*$|"
+                r"^submitPullRequestReview$|^addDiscussionComment$"), "comment"),
+    (re.compile(r"^(?:create|update)Release$"), "publish-release"),
+    (re.compile(r"^deleteRelease$"), "repo-admin-delete"),
+    (re.compile(r"^(?:create|update|delete)(?:Deployment\w*|Environment)$"), "repo-admin-ci"),
+]
+
+
+def graphql_mutations(query):
+    """The top-level fields of each `mutation` operation in a GraphQL document."""
+    names = []
+    for m in re.finditer(r"\bmutation\b[^{]*\{", query):
+        depth, j, start = 1, m.end(), m.end()
+        while j < len(query) and depth:
+            c = query[j]
+            if c in "{(":
+                if depth == 1:  # a field of the operation: its name ends the text before it
+                    head = query[start:j]
+                    f = re.search(r"(?:\w+\s*:\s*)?([A-Za-z_]\w*)\s*$", head)
+                    if f:
+                        names.append(f.group(1))
+                depth += 1
+            elif c in ")}":
+                depth -= 1
+                if depth == 1:
+                    start = j + 1
+            elif c in "\"'":
+                end = query.find(c, j + 1)
+                j = end if end > 0 else len(query)
+            j += 1
+    return names
+
+
+def read_text(path, cwd, limit=1 << 20):
+    """A file's text, or None when it cannot be read (stdin, a missing file, a name built from
+    an expansion)."""
+    if not path or path == "-" or re.search(r"[$`\0]", path):
+        return None
+    try:
+        with open(os.path.join(cwd or "", os.path.expanduser(path)), encoding="utf-8",
+                  errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return None
+
+
+def graphql_literal(query):
+    """Whether a GraphQL document reached the guard as it will be sent: not a shell or
+    PowerShell variable, a command substitution or a file it could not read. A `$name` is a
+    GraphQL variable only when the operation declares it (`($name: Type)`); any other is an
+    expansion, and every document has a `{`."""
+    if not isinstance(query, str) or "{" not in query or "\0" in query or "`" in query or \
+            re.search(r"\$[({]", query):
+        return False
+    return set(re.findall(r"\$(\w+)", query)) <= set(re.findall(r"\$(\w+)\s*:", query))
+
+
+def classify_graphql(tail, cwd):
+    """gh api graphql: the query passes as a field (`-f query=…`, `-fquery=…`, `--raw-field
+    query=…`, `-F query=@file`) or in a JSON `--input` file."""
+    queries, variables, unread = [], {}, []
+    for name, value, typed in gh_fields(tail):
+        if value is None:
+            continue
+        if name == "query":
+            if typed and value.startswith("@"):
+                text = read_text(value[1:], cwd)
+                if text is None:
+                    unread.append(f"the query file {value[1:]}")
+                    continue
+                value = text
+            queries.append(value)
+        else:
+            variables[name] = (value, typed)
+    input_vars = None
+    source = option_value(tail, ["--input"])
+    if source is not None:
+        try:
+            data = json.loads(read_text(source, cwd) or "")
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("query"), str):
+            queries.append(data["query"])
+            input_vars = data.get("variables")
+        else:
+            unread.append(f"--input {source}")
+    return graphql_classes("gh api graphql", queries, variables, input_vars, cwd, unread)
+
+
+def graphql_classes(where, queries, variables, input_vars, cwd, unread=()):
+    """Each mutation of a GraphQL request, classed as the same write through gh —
+    createPullRequest a PR (its body held to PR-BODY.md), mergePullRequest a merge,
+    updatePullRequest a tracker edit (its body held to PR-BODY.md), comments as comments; any
+    other mutation a tracker edit. A query the guard cannot read is opaque: it may be any of
+    them."""
+    if unread or not queries or not all(graphql_literal(q) for q in queries):
+        what = unread[0] if unread else "no query" if not queries else \
+            "a query built from a variable, a substitution or a file"
+        return [("opaque", f"{where}: {what} — the guard cannot read the GraphQL it sends")]
+    joined = "\n".join(queries)
+    if not re.search(r"\bmutation\b", joined):
+        return []
+    names = graphql_mutations(joined)
+    if not names:
+        return [("opaque", f"{where}: a mutation the guard cannot read")]
+    nested = [n for n in variables if re.search(r"\[body\]", n)]
+    input_body = graphql_has_body(input_vars)
+    found = []
+    for name in names:
+        kind = next((k for rx, k in GRAPHQL_CLASSES if rx.match(name)), None)
+        if name == "updatePullRequest":
+            found.append(("tracker", f"{where} (updatePullRequest)"))
+            if re.search(r"\bbody\s*:", joined) or "body" in variables or nested or input_body:
+                found += graphql_pr_body(where, name, joined, variables, nested, input_body, cwd)
+        elif name in {"closePullRequest", "reopenPullRequest"}:
+            found.append(("tracker", f"{where} ({name})"))
+        elif kind == "pr":
+            found.append(("pr", f"{where} (createPullRequest)"))
+            found += graphql_pr_body(where, name, joined, variables, nested, input_body, cwd)
+        elif kind == "comment":
+            found.append(("comment", f"{where} ({name})", None))
+        elif kind:
+            found.append((kind, f"{where} ({name})"))
+        else:
+            found.append(("tracker", f"{where} ({name})"))
+    return found
+
+
+def graphql_has_body(value):
+    """Whether JSON variables carry a `body` anywhere."""
+    if isinstance(value, dict):
+        return "body" in value or any(graphql_has_body(v) for v in value.values())
+    if isinstance(value, list):
+        return any(graphql_has_body(v) for v in value)
+    return False
+
+
+def graphql_pr_body(where, name, query, variables, nested=(), input_body=False, cwd=None):
+    """The PR body check of a GraphQL PR write: the body passes as a `body` variable that is the
+    approved file (`-F body=@<run_dir>/PR-BODY.md`) or its text; one written into the query, a
+    nested field (`-F input[body]=…`) or JSON variables cannot be checked."""
+    if nested or input_body:
+        issue = "a body passed as a nested field or in JSON variables cannot be checked " \
+                "(pass it as `-F body=@<run_dir>/PR-BODY.md` and `body: $body`)"
+    elif re.search(r"\bbody\s*:\s*\$body\b", query) and "body" in variables:
+        value, typed = variables["body"]
+        issue = pr_body_issue(None, value[1:], cwd) if typed and value.startswith("@") else \
+            pr_body_issue(value, None, cwd)
+    else:
+        issue = "a body written into the GraphQL query cannot be checked (pass it as " \
+                "`-F body=@<run_dir>/PR-BODY.md` and `body: $body`)"
+    return [("pr-body", f"{where} ({name}): {issue}")] if issue else []
 
 
 def skip_prefix(tokens):
@@ -1462,14 +2354,42 @@ def classify_shell(command, cwd, depth=0, state=None):
         segments = split_segments(command)
     except ValueError:
         return found + raw_scan(command, cwd, depth)
-    per_segment, state = {}, {} if state is None else state
+    per_segment, state, exported, gh_env = {}, {} if state is None else state, [], {}
     for tokens in segments:
         seg_start = len(found)
         i = skip_prefix(tokens)
-        if i >= len(tokens):
+        if i >= len(tokens) or os.path.basename(tokens[i]) in {"export", "declare", "typeset"}:
+            exported += [t for t in tokens if risky_git_env(t)]  # set for the commands after it
+            gh_env = gh_env_of(assignments(tokens), cwd, gh_env)
             continue
         prog = os.path.basename(tokens[i]).lower()
         args = tokens[i + 1:]
+        if prog in {"cd", "pushd"} and args and not args[0].startswith("-"):
+            moved = resolve_path(args[0], cwd)  # `cd <run> && gh pr create --body-file …`
+            cwd = moved if moved and os.path.isdir(moved) else cwd
+            continue
+        risky = [t for t in tokens[:i] if risky_git_env(t)] + exported
+        if risky and "git" in {os.path.basename(t).lower() for t in tokens[i:]}:
+            found.append(("opaque", f"git run with `{risky[0][:60]}` from the environment: it "
+                                    "can run a program or change git's settings"))
+        if re.sub(r"\.exe$", "", prog) in {"pwsh", "powershell"}:  # PowerShell run from a shell
+            if any(PS_ENCODED.match(a) for a in args):
+                found.append(("opaque", f"`{prog} -EncodedCommand …`: an encoded command"))
+            carrier = next((args[j + 1] for j, a in enumerate(args[:-1])
+                            if a.lower() in {"-c", "-command", "-cmd"}), None)
+            if carrier:
+                found += classify_powershell(carrier, cwd)
+            continue
+        if re.sub(r"\.exe$", "", prog) == "cmd":  # cmd /c "set GIT_SSH_COMMAND=x && git …"
+            carried = " ".join(args)
+            risky_set = cmd_risky_env(carried)
+            if risky_set and re.search(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])", carried):
+                found.append(("opaque", f"git run with `{risky_set[:60]}` from the environment: "
+                                        "it can run a program or change git's settings"))
+            found += raw_scan(carried, cwd, depth, gh_env_of(
+                [(m.group(1), m.group(2).strip()) for m in CMD_SET.finditer(carried)], cwd,
+                gh_env))
+            continue
         if prog in SHELLS or prog in {"su", "eval", "env"}:
             carrier = None
             if prog == "eval":
@@ -1483,17 +2403,28 @@ def classify_shell(command, cwd, depth=0, state=None):
                 found += classify_shell(carrier, cwd, depth + 1)
             if prog != "env":
                 continue
-        # every git/gh word in the segment: covers find -exec, xargs, submodule foreach, …
+        # every git/gh word in the segment: covers find -exec, xargs, timeout, …
+        inner = []
         for j in range(i, len(tokens)):
             name = os.path.basename(tokens[j]).lower()
             if name == "git":
-                found += classify_git(tokens[j + 1:], cwd, depth, {}, state)
+                inner += classify_git(tokens[j + 1:], cwd, depth, {}, state)
             elif name == "gh":
-                found += classify_gh(tokens[j + 1:], cwd)
+                inner += classify_gh(tokens[j + 1:], cwd,
+                                     env=gh_env_of(assignments(tokens[:j]), cwd, gh_env))
             elif j > i and name in SHELLS and j + 2 < len(tokens) and \
                     re.fullmatch(r"-[a-z]*c[a-z]*", tokens[j + 1]):
-                found += classify_shell(tokens[j + 2], cwd, depth + 1)  # find -exec sh -c '…'
-        found += classify_http(prog, args)
+                inner += classify_shell(tokens[j + 2], cwd, depth + 1)  # find -exec sh -c '…'
+        fanout = prog in FANOUT or any(os.path.basename(t).lower() in FANOUT
+                                       for t in tokens[:i])
+        if fanout and inner:
+            # xargs / parallel / find -exec run it once per input, with arguments the guard
+            # never sees (`echo main | xargs git push origin`)
+            found.append(("opaque", f"`{' '.join(tokens[:i + 1])[:40]} … git/gh`: run once per "
+                                    "input with arguments the guard cannot see"))
+        else:
+            found += inner
+        found += classify_http(prog, args, cwd)
         runner = re.sub(r"^\$\{?|\}$", "", prog) if "$" in tokens[i] else prog
         if "$" in tokens[i] and runner not in RUNNERS:
             carrier = next((args[j + 1] for j, a in enumerate(args[:-1])
@@ -1511,6 +2442,55 @@ def classify_shell(command, cwd, depth=0, state=None):
             per_segment[action] = per_segment.get(action, 0) + 1
     found += [("repeat", f"{n} × {a} in one call") for a, n in per_segment.items() if n > 1]
     return found
+
+
+# environment variables that make git run a program or read other settings
+GIT_ENV_PROGRAM = re.compile(r"^(?:GIT_(?:EDITOR|SEQUENCE_EDITOR|PAGER|SSH|SSH_COMMAND|ASKPASS|"
+                             r"EXTERNAL_DIFF|PROXY_COMMAND|EXEC_PATH|TEMPLATE_DIR|DIR|"
+                             r"COMMON_DIR)|SSH_ASKPASS|EDITOR|VISUAL|PAGER|HOME|XDG_CONFIG_HOME|"
+                             r"USERPROFILE)$")
+BENIGN_PROGRAM = {"cat", "less", "more", "true", "false", "vi", "vim", "nvim", "nano", "emacs",
+                  "code", "head", "tail", "ssh", ":"}
+
+
+def benign_program(key, value):
+    """`git -c core.pager=cat`, `-c core.editor=true`, `-c pager.log=false`: a pager or an editor
+    named plainly, as GIT_PAGER=cat and GIT_EDITOR=true pass in the environment."""
+    return (key in {"core.pager", "core.editor", "sequence.editor"} or key.startswith("pager.")) \
+        and bool(re.fullmatch(r"[\w./:-]*", value)) and \
+        os.path.basename(value) in BENIGN_PROGRAM | {""}
+
+
+def assignments(tokens):
+    """The (name, value) pairs among `NAME=value` words."""
+    return [m.groups() for m in (re.match(r"^([A-Za-z_]\w*)=(.*)$", t, re.S) for t in tokens)
+            if m]
+
+
+def risky_git_env(token):
+    """`GIT_CONFIG_PARAMETERS=…`, `GIT_CONFIG_COUNT=…`, `GIT_SSH_COMMAND='sh -c …'`,
+    `GIT_EDITOR=…`: an assignment before git that changes its settings or runs a program.
+    `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_PAGER=cat` and other plain
+    names of an editor or pager pass; GIT_INDEX_FILE and the like are not settings."""
+    m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", token, re.S)
+    if not m:
+        return False
+    name, value = m.group(1), m.group(2)
+    if name.startswith("GIT_CONFIG"):
+        if name in {"GIT_CONFIG_NOSYSTEM"}:
+            return False
+        return not (name in {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} and value == "/dev/null")
+    if not GIT_ENV_PROGRAM.match(name):
+        return False
+    if name in {"GIT_DIR", "GIT_COMMON_DIR", "GIT_TEMPLATE_DIR", "GIT_EXEC_PATH", "HOME",
+                "XDG_CONFIG_HOME", "USERPROFILE"}:
+        return True  # another repository's config and hooks, or other git programs
+    return not (re.fullmatch(r"[\w./:-]*", value) and
+                os.path.basename(value) in BENIGN_PROGRAM | {""})
+
+
+# programs that run the command they carry once per input, with arguments added at run time
+FANOUT = {"xargs", "gxargs", "parallel", "find", "gfind", "fd", "fdfind", "watch", "entr", "rush"}
 
 
 GIT_VOCAB = re.compile(r"(?:push|commit|merge|rebase|reset|pull|cherry-pick|revert|stash|checkout|"
@@ -1597,13 +2577,40 @@ def runner_targets(runner, args):
 TRACKER_PATH = re.compile(r"/rest/api/\d|/rest/agile/|/api/v\d+/(?:task|issue|projects)|"
                           r"/youtrack/api/|/api/issues", re.I)
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# incoming webhooks and bot APIs of chat and mail services: a POST there is a message sent
+WEBHOOK = re.compile(r"hooks\.slack\.com|slack\.com/api/(?:chat|files)\.|"
+                     r"discord(?:app)?\.com/api/(?:v\d+/)?(?:webhooks|channels/\d+/messages)|"
+                     r"webhook\.office\.com|outlook\.office(?:365)?\.com/webhook|"
+                     r"logic\.azure\.com|api\.telegram\.org/bot|hooks\.zapier\.com|"
+                     r"chat\.googleapis\.com|api\.sendgrid\.com|api\.mailgun\.net|"
+                     r"api\.postmarkapp\.com", re.I)
+# MCP servers of mail, chat and calendar services: what they send leaves the session for good
+SEND_SERVER = re.compile(r"(?<![a-z0-9])(?:g?mail|e-?mail|outlook|office365|slack|discord|"
+                         r"telegram|whatsapp|mattermost|zulip|rocket-?chat|twilio|sendgrid|mailgun|"
+                         r"postmark|smtp|imessage|calendar|gcal|calendly)(?![a-z0-9])|"
+                         # words with other meanings count only as the server's whole name
+                         r"^(?:claude-ai-|mcp-)?(?:signal|sms|zoom|teams|ms-?teams|exchange)"
+                         r"(?:-(?:mcp|server|api))?$", re.I)
+# on any other server, a tool whose own name sends mail or a message, or writes a calendar event
+MAIL_VERBS = {"send", "reply", "forward"}
+MAIL_OBJECTS = {"mail", "mails", "email", "emails", "gmail", "message", "messages", "sms", "draft",
+                "drafts", "dm", "dms"}
+EVENT_VERBS = {"create", "update", "delete", "respond", "insert", "patch", "cancel", "move",
+               "add", "remove", "edit", "rsvp", "accept", "decline", "reschedule"}
+EVENT_OBJECTS = {"event", "events", "meeting", "meetings", "calendar", "calendars", "invite",
+                 "invitation", "invitations"}
+SEND_WORDS = {"send", "reply", "forward", "post", "publish", "invite", "respond", "schedule",
+              "share", "broadcast", "rsvp", "react", "reaction", "reactions"}
+CALENDAR_WRITES = {"create", "update", "delete", "move", "insert", "patch", "cancel", "add",
+                   "import", "quick", "remove", "edit"}
 
 
-def classify_http(prog, args):
+def classify_http(prog, args, cwd=None):
     """curl, wget and httpie calls that write to a tracker API."""
     urls = [a for a in args if re.match(r"^(?:https?://)?[\w.-]+\.[a-z]{2,}(?:[:/]|$)", a, re.I)
             or "://" in a]
-    if not any(TRACKER_SERVER.search(u) or TRACKER_PATH.search(u) for u in urls):
+    webhook = any(WEBHOOK.search(u) for u in urls)
+    if not webhook and not any(TRACKER_SERVER.search(u) or TRACKER_PATH.search(u) for u in urls):
         return []
     write = False
     if prog == "curl":
@@ -1627,9 +2634,63 @@ def classify_http(prog, args):
         return []
     if not write:
         return []
+    if webhook:
+        return [("send", f"{prog} to a chat or mail webhook")]
+    if any(re.search(r"/graphql/?(?:[?#]|$)", u) for u in urls):
+        return http_graphql(prog, args, cwd)
     if any(re.search(r"/comments?\b", u) for u in urls):
         return [("comment", f"{prog} to a tracker comment API", None)]
     return [("tracker", f"{prog} to a tracker API")]
+
+
+def http_graphql(prog, args, cwd):
+    """A POST to a tracker's GraphQL endpoint (api.github.com/graphql, api.linear.app/graphql):
+    its mutations are classed as through gh api graphql. The JSON body is read from the
+    command (curl -d/--data*/--json, wget --post-data/--body-data, httpie `query=…`) or from its
+    `@file`; anything else is opaque."""
+    where = f"{prog} to a GraphQL API"
+    bodies, unread = [], []
+    if prog in {"curl", "wget"}:
+        names = r"-d|--data|--data-raw|--data-binary|--data-ascii|--data-urlencode|--json" \
+            if prog == "curl" else r"--post-data|--body-data|--post-file|--body-file"
+        j = 0
+        while j < len(args):
+            a = args[j]
+            m = re.match(rf"^({names})(?:=(.*))?$", a, re.S) or \
+                (re.match(r"^(-d)(.+)$", a, re.S) if prog == "curl" else None)
+            if m:
+                value = m.group(2)
+                if value is None and j + 1 < len(args):
+                    value, j = args[j + 1], j + 1
+                raw = m.group(1) == "--data-raw"
+                if m.group(1) in {"--post-file", "--body-file"}:
+                    value = "@" + (value or "")
+                if value and value.startswith("@") and not raw:
+                    text = read_text(value[1:], cwd)
+                    if text is None:
+                        unread.append(f"the body file {value[1:]}")
+                    else:
+                        bodies.append(text)
+                elif value is not None:
+                    bodies.append(value)
+            elif prog == "curl" and re.match(r"^(?:-F|--form|-T|--upload-file)", a):
+                unread.append(f"`{a}`")
+            j += 1
+    else:  # httpie: query=… items; anything else is not read
+        query = [a.split("=", 1)[1] for a in args if a.startswith("query=")]
+        bodies = [json.dumps({"query": q}) for q in query]
+    queries, variables = [], None
+    for body in bodies:
+        try:
+            data = json.loads(body)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("query"), str):
+            queries.append(data["query"])
+            variables = data.get("variables") if variables is None else variables
+        else:
+            unread.append("a request body that is not literal JSON with a query")
+    return graphql_classes(where, queries, {}, variables, cwd, unread)
 
 
 MCP_ADMIN_WORDS = [
@@ -1681,6 +2742,22 @@ def classify_mcp(tool_name, tool_input):
         return []
     server, words = m.group(1), split_words(m.group(2))
     inp = tool_input if isinstance(tool_input, dict) else {}
+    if SEND_SERVER.search(server.replace("_", "-")) and not TRACKER_SERVER.search(server):
+        calendar = re.search(r"calendar|gcal|calendly|zoom", server, re.I)
+        chat = not re.search(r"mail|outlook|exchange|office365|smtp|sendgrid|postmark", server, re.I)
+        chat_edit = chat and words & {"message", "messages", "post", "posts", "canvas",
+                                      "canvases"} and \
+            words & {"update", "edit", "delete", "remove", "create", "add", "share"}
+        verbs = words & SEND_WORDS
+        if words & READ_WORDS:  # `get_post`, `list_reactions` read; a send verb still sends
+            verbs &= MAIL_VERBS | {"respond", "invite", "rsvp", "broadcast"}
+        if verbs or calendar and words & CALENDAR_WRITES or chat_edit:
+            return [("send", tool_name)]
+        return []
+    if not TRACKER_SERVER.search(server) and not GIT_SERVER.search(server) and (
+            words & MAIL_VERBS and words & MAIL_OBJECTS or
+            words & EVENT_VERBS and words & EVENT_OBJECTS):
+        return [("send", tool_name)]
     if GIT_SERVER.search(server):
         if "commit" in words:
             return [("commit", tool_name)]
@@ -1705,7 +2782,10 @@ def classify_mcp(tool_name, tool_input):
     reviewish = words & {"review", "thread", "comment", "comments", "note", "notes"}
     if re.search(r"github|gitlab|gitkraken", server, re.I) and not reviewish:
         if request and words & {"pull", "merge", "mr"} and "create" in words:
-            return [("pr", tool_name)]
+            return [("pr", tool_name)] + mcp_pr_body(tool_name, inp)
+        if request and words & {"pull", "merge", "mr"} and words & {"update", "edit"} and \
+                isinstance(inp.get("body") or inp.get("description"), str):
+            return [("tracker", tool_name)] + mcp_pr_body(tool_name, inp)
         if "merge" in words and (request or "mr" in words) and not words & {"update"}:
             return [("merge", tool_name)]
         # secrets, CI and protection first: create_repository_secret is no new repository
@@ -1758,7 +2838,7 @@ def classify_tracker_write(name, words, inp, has_text):
                        item and words & {"close", "reopen"})
     if changed <= STATUS_KEYS and (status_tool or changed and
                                    words & {"update", "edit", "save", "set", "upsert"}):
-        return [("status", name)]
+        return [("status", name, call_targets(inp))]
     texts = [v for k, v in inp.items() if re.match(r"comment", str(k), re.I) and
              isinstance(v, str) and v.strip()]
     extra = [("comment", f"{name} (comment)", texts)] if texts else []
@@ -1775,6 +2855,22 @@ STATUS_KEYS = {"status", "state", "statusId", "stateId", "status_id", "state_id"
 ID_EXTRA = {"owner", "repo", "repository", "issue_number", "number", "key", "identifier",
             "issueIdOrKey", "custom_task_ids", "cloudId", "team_id", "workspace_id", "model",
             "operator"}
+
+
+TARGET_SKIP = {"owner", "repo", "repository", "cloudId", "team_id", "workspace_id", "model",
+               "operator", "custom_task_ids", "team"}
+
+
+def call_targets(inp):
+    """The ids a tracker call names its task by: `task_id`, `issueIdOrKey`, `issue_number`, …"""
+    out = []
+    for k, v in (inp or {}).items():
+        if isinstance(v, dict):  # an operator's body
+            out += call_targets(v)
+        elif id_key(k) and k not in TARGET_SKIP | STATUS_KEYS and isinstance(v, (str, int)) \
+                and not isinstance(v, bool):
+            out.append(str(v))
+    return out
 
 
 def id_key(key):
@@ -1812,15 +2908,403 @@ def classify_operator(name, inp):
     if words & COMMENT_WORDS and operator not in {"delete", "delete_many"}:
         texts = comment_texts(body)
         return [("comment", label, texts or None)]
-    return classify_tracker_write(label, words - {"children"}, body,
-                                  bool(comment_texts(body)))
+    found = classify_tracker_write(label, words - {"children"}, body, bool(comment_texts(body)))
+    return [(k, what, call_targets(inp)) if k == "status" else (k, what, *rest)
+            for k, what, *rest in found]
+
+
+# --- PowerShell ---------------------------------------------------------------------------
+
+PS_HTTP = {"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "curl", "wget"}
+PS_RUNNERS = {"invoke-expression", "iex", "start-process", "saps", "start", "invoke-command",
+              "icm", "cmd", "pwsh", "powershell", "bash", "sh", "wsl", "start-job", "sajb"}
+PS_WRITERS = {"set-content", "sc", "add-content", "ac", "out-file", "new-item", "ni",
+              "remove-item", "rm", "del", "erase", "ri", "rd", "rmdir", "move-item", "mv", "mi",
+              "move", "copy-item", "cp", "cpi", "copy", "clear-content", "clc", "rename-item",
+              "ren", "rni", "tee-object", "tee", "set-itemproperty", "sp", "export-csv",
+              "export-clixml", "set-acl", "new-itemproperty"}
+
+
+def ps_segments(command, keep_ops=False):
+    """PowerShell statements as word lists: backtick escapes undone, split at ; | && || and line
+    ends outside quotes, the call operators `&` and `.` dropped (kept with `keep_ops`) — also
+    when written without a space (`&'git'`, `&("git")`, `.(…)`, `&{…}`). A script block
+    (`{ git push }`, `&{…}`, `.{…}`, `ForEach-Object { … }`) and an array or a cast of a
+    pipeline (`@(git push)`, `[void](git push)`, `(git push)`) are statements of their own;
+    `${name}` stays a word, and `(…)` right after a call operator stays the program it names."""
+    command = re.sub(r"`\r?\n", " ", command)
+    command = re.sub(r"`(.)", r"\1", command)
+    command = re.sub(r"(?:^|(?<=[\s;|{(]))([&.])(?=['\"($@{])", r"\1 ", command)
+    out, word, words, quote, i, parens = [], "", [], None, 0, []
+    while i < len(command):
+        c = command[i]
+        if not quote and (c in "{}" and not (c == "{" and word.endswith("$")) or
+                          c == "(" and not words and (word in {"", "@"} or
+                                                      re.fullmatch(r"(?:\[[^\]]*\])+", word)) or
+                          c == ")" and parens and parens[-1]):
+            if c == "(":
+                parens.append(True)
+                word = ""
+            elif c == ")":
+                parens.pop()
+            if word:
+                words.append(word)
+            if words:
+                out.append(words)
+            word, words = "", []
+            i += 1
+            continue
+        if not quote and c == "(":
+            parens.append(False)
+        elif not quote and c == ")" and parens:
+            parens.pop()
+        if c == "{" and word.endswith("$") and not quote:  # ${name}: one word up to its `}`
+            end = command.find("}", i)
+            end = len(command) - 1 if end < 0 else end
+            word += command[i:end + 1]
+            i = end + 1
+            continue
+        if quote:
+            if c == quote:
+                if command[i + 1:i + 2] == quote:  # '' inside '…'
+                    word += c
+                    i += 1
+                else:
+                    quote = None
+            else:
+                word += c
+        elif c in "'\"":
+            quote = c
+        elif c in ";|\n" or command.startswith("&&", i):
+            if word:
+                words.append(word)
+            if words:
+                out.append(words)
+            word, words = "", []
+            if command.startswith(("&&", "||"), i):
+                i += 1
+        elif c.isspace():
+            if word:
+                words.append(word)
+            word = ""
+        else:
+            word += c
+        i += 1
+    if word:
+        words.append(word)
+    if words:
+        out.append(words)
+    if keep_ops:
+        return out
+    return [[w for w in seg if w not in {"&", "."}] or seg for seg in out]
+
+
+def ps_program(word):
+    word = re.sub(r"^(?:\[[^\]]*\])*[@$]?\(+", "", word)  # @(git, $(git, [void](git
+    name = re.split(r"[\\/]", word.strip("() "))[-1].lower()
+    return re.sub(r"\.(?:exe|cmd|bat|ps1)$", "", name)
+
+
+# Start-Process parameters around the program's own arguments
+PS_PROCESS_FLAGS = {"-argumentlist", "-args", "-wait", "-nonewwindow", "-passthru", "-filepath",
+                    "-loaduserprofile", "-usenewenvironment", "-noprofile", "-noninteractive"}
+PS_PROCESS_VALUES = {"-windowstyle", "-workingdirectory", "-verb", "-credential",
+                     "-redirectstandardoutput", "-redirectstandarderror", "-redirectstandardinput"}
+# a string PowerShell runs that is not a plain literal: `iex $cmd`, `iex ('git ' + 'push')`
+PS_IEX_BUILT = re.compile(r"(?i)(?<![\w-])(?:invoke-expression|iex)\s+(?:-command\s+)?"
+                          r"(?!'[^'\n]*'\s*(?:$|[;|)}\n]))(?!\"[^\"$`\n]*\"\s*(?:$|[;|)}\n]))\S")
+PS_ENCODED = re.compile(r"(?i)^-(?:e|ec|en|enc|enco\w*|encodedcommand|encodedarguments|ea)$")
+
+
+def ps_words(args):
+    """A program's arguments as Start-Process passes them: 'push','origin' and @('push') split
+    into words, its own parameters dropped."""
+    words = [w for w in re.split(r"[,'\"@()\s]+", " ".join(args)) if w]
+    out, skip = [], False
+    for w in words:
+        if skip:
+            skip = False
+        elif w.lower() in PS_PROCESS_VALUES:
+            skip = True
+        elif w.lower() not in PS_PROCESS_FLAGS:
+            out.append(w)
+    return out
+
+
+def ps_expression_end(seg):
+    """The index of the word that closes the `(…)` expression `seg` starts with."""
+    depth = 0
+    for k, w in enumerate(seg):
+        depth += w.count("(") - w.count(")")
+        if depth <= 0:
+            return k
+    return len(seg) - 1
+
+
+def ps_call_opaque(program, rest, called):
+    """Whether a program a PowerShell statement calls through `&` / `.` or names by `$var` /
+    `(…)` may be git. A literal name decides by itself (`git` there is read as git); so does
+    `(Get-Command <name>)`, a literal basename after an expansion (`"$root\\build.ps1"`,
+    `(Join-Path $x b.ps1)`) or words naming another tool (`$python`). Anything else after a
+    call operator is opaque; a bare `$var` statement is judged as in Bash."""
+    text = program.strip()
+    inner = text[1:-1].strip() if text.startswith("(") and text.endswith(")") else text
+    if not re.search(r"[$()+\[\s*?]", inner):
+        return False  # a literal program name
+    m = re.fullmatch(r"(?i)(?:get-command|gcm)\s+(?:-name\s+)?['\"]?([\w.\\/:*?\[\]-]+)['\"]?"
+                     r"(?:\s+-\w+)*", inner)
+    if m:  # a wildcard may match git: `(Get-Command gi*)`
+        name = ps_program(m.group(1))
+        return any(fnmatch.fnmatchcase(g, name) for g in ("git", "gh"))
+    built = re.search(r"(?i)\+|-(?:join|replace|f|split|creplace)\b|\[char|\.(?:replace|substring|"
+                      r"insert|trim|tolower|toupper)\b|\$\(", inner)
+    words = {w.lower() for w in re.findall(r"[A-Za-z0-9]+", inner)}
+    if words & OTHER_TOOL_WORDS and not built:
+        return False
+    if built:  # a name put together at run time: `("gi" + "t")`, `"gi$('t')"`
+        return called or plausibly_git("$" + text if text.startswith("(") else text, rest)
+    last = re.split(r"[\\/\s'\"]+", inner.rstrip(") '\""))[-1]
+    if re.search(r"[\\/\s]", inner) and not re.search(r"[$()+\[]", last) or \
+            re.search(r"(?i)\.(?:ps1|psm1|exe|cmd|bat)$", last) and \
+            not re.search(r"[$()+]", last):
+        return ps_program(last) == "git"
+    if not called:
+        return plausibly_git("$" + text if text.startswith("(") else text, rest)
+    return True
+
+
+# PowerShell ways to set an environment variable: $env:X = …, ${env:X} = …, Set-Item env:X …,
+# New-Item -Path Env:X …, [Environment]::SetEnvironmentVariable('X', …)
+PS_ENV_SET = [
+    re.compile(r"(?i)\$\{?env:([\w$()]+)\}?\s*[+]?=(?!=)\s*([^;\n|]*)"),
+    re.compile(r"(?i)(?<![\w-])(?:set-item|si|new-item|ni|set-content|sc|add-content|ac)\s+"
+               r"(?:-(?:literal)?path\s+)?['\"]?env:[\\/]?([^\s'\"]+)['\"]?\s+(?:-value\s+)?"
+               r"([^;\n|]*)"),
+    re.compile(r"(?i)\[(?:system\.)?environment\]::setenvironmentvariable\(\s*([^,]*),\s*"
+               r"((?:'[^']*'|\"[^\"]*\"|[^,)])*)"),
+]
+
+
+def ps_risky_env(command):
+    """The first PowerShell assignment of an environment variable that changes git's settings
+    or makes it run a program (as risky_git_env reads `NAME=value` in Bash), or None. A name or
+    a value that is not a literal counts as risky."""
+    plain = re.sub(r"`(.)", r"\1", command)
+    for rx in PS_ENV_SET:
+        for m in rx.finditer(plain):
+            name, value = m.group(1).strip().strip("'\""), m.group(2).strip()
+            literal = re.fullmatch(r"'([^']*)'|\"([^\"$`]*)\"|([^\s'\"$`(]*)", value)
+            value = next((g for g in literal.groups() if g is not None), "") if literal \
+                else "$" + value
+            # Windows names are case-insensitive: $env:Git_Ssh_Command is GIT_SSH_COMMAND
+            if not re.fullmatch(r"\w+", name) or risky_git_env(f"{name.upper()}={value}"):
+                return m.group(0).strip()
+    return cmd_risky_env(plain) if CMD_CARRIER.search(plain) else None
+
+
+def ps_gh_env(command, cwd):
+    """GH_CONFIG_DIR / XDG_CONFIG_HOME a PowerShell command (or a cmd `set` in it) sets."""
+    plain, pairs = re.sub(r"`(.)", r"\1", command), []
+    for rx in PS_ENV_SET:
+        for m in rx.finditer(plain):
+            name, value = m.group(1).strip().strip("'\""), m.group(2).strip()
+            literal = re.fullmatch(r"'([^']*)'|\"([^\"$`]*)\"|([^\s'\"$`(]*)", value)
+            if not re.fullmatch(r"\w+", name):  # a name built at run time may be either
+                pairs.append(("GH_CONFIG_DIR", "$" + name))
+            else:
+                pairs.append((name, next((g for g in literal.groups() if g is not None), "")
+                              if literal else "$" + value))
+    if CMD_CARRIER.search(plain):
+        pairs += [(m.group(1), m.group(2).strip()) for m in CMD_SET.finditer(plain)]
+    return gh_env_of(pairs, cwd)
+
+
+# cmd.exe: `cmd /c "set GIT_SSH_COMMAND=x && git fetch"`, `set /p GIT_DIR=<f`, `set "X=y"`
+CMD_CARRIER = re.compile(r"(?i)(?<![\w.-])cmd(?:\.exe)?['\"]?\s+/[a-z]")
+CMD_SET = re.compile(r"(?i)(?<![\w-])set\s+(?:/[ap]\s+)?\"?([^\s=\"&|]+)=([^&|\n\"]*)")
+
+
+def cmd_risky_env(text):
+    """The first cmd.exe `set NAME=value` that changes git's settings or makes it run a program
+    (names without case, as Windows reads them), or None. `set /p` reads the value at run time."""
+    for m in CMD_SET.finditer(text):
+        name, value = m.group(1), m.group(2).strip()
+        if "/p" in m.group(0).lower().split() or "%" in value or "!" in value:
+            value = "$" + value
+        if not re.fullmatch(r"\w+", name) or risky_git_env(f"{name.upper()}={value}"):
+            return m.group(0).strip()
+    return None
+
+
+def classify_powershell(command, cwd):
+    """The PowerShell tool, read like Bash where it can be: git and gh words anywhere in a
+    statement — also as Start-Process arguments ('push','origin', @('push'), `-FilePath git.exe
+    -ArgumentList 'push origin'`) and `& (Get-Command git) push` — and curl / Invoke-WebRequest
+    to a tracker or a webhook. What runs through a literal string (`Invoke-Expression "…"`,
+    `cmd /c`) is read for git and gh words. Opaque: a program named by a variable or a
+    `(…)` expression that may be git, Invoke-Expression of a built string, an encoded command."""
+    found = []
+    if PS_IEX_BUILT.search(re.sub(r"`(.)", r"\1", command)):
+        found.append(("opaque", "Invoke-Expression of a string built at run time"))
+    for inner in re.findall(r"\$\(((?:[^()]|\([^()]*\))*)\)", re.sub(r"`(.)", r"\1", command)):
+        found += classify_powershell(inner, cwd)  # $(…), also inside "…": it runs
+    risky = ps_risky_env(command)
+    if risky and re.search(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])", command):
+        found.append(("opaque", f"git run with `{risky[:60]}` from the environment: it can run a "
+                                "program or change git's settings"))
+    for seg, raw in zip(ps_segments(command), ps_segments(command, keep_ops=True)):
+        prog = ps_program(seg[0])
+        args = seg[1:]
+        named = False
+        for j, w in enumerate(seg):
+            name = ps_program(w)
+            if name not in {"git", "gh"}:
+                continue
+            named = True
+            splat = next((a for a in seg[j + 1:] if re.match(r"^@\w", a)), None)
+            if splat:  # git @args: the arguments are an array the guard never sees
+                found.append(("opaque", f"`{name} {splat}`: arguments splatted from a variable"))
+            run = (lambda a: classify_git(a, cwd, 0, {})) if name == "git" else \
+                (lambda a: classify_gh(a, cwd, env=ps_gh_env(command, cwd)))
+            res = run(seg[j + 1:])
+            split = ps_words(seg[j + 1:])
+            # Start-Process git -ArgumentList 'push','origin'; git @('push', 'origin')
+            if not res and split != seg[j + 1:] and (j or any(
+                    re.match(r"^@\(|.*,", w) for w in seg[j + 1:])):
+                res = run(split)
+            found += res
+        if prog in PS_RUNNERS:
+            found += raw_scan(" ".join(args), cwd, 0)
+        if prog in {"pwsh", "powershell"} and any(PS_ENCODED.match(a) for a in args):
+            found.append(("opaque", f"`{seg[0]} -EncodedCommand …`: an encoded command"))
+        called = raw[0] in {"&", "."} and len(raw) > 1
+        if (called or seg[0].startswith(("$", "("))) and not named:
+            # `& $g push`, `& (Get-Command x) push`, `&("gi"+"t") push`, `. $script`
+            end = ps_expression_end(seg) if seg[0].startswith("(") else 0
+            program, rest = " ".join(seg[:end + 1]), seg[end + 1:]
+            if ps_call_opaque(program, rest, called):
+                found.append(("opaque", f"`{program[:60]} …`: a program named by a variable or "
+                                        "an expression that may be git"))
+        if prog in PS_HTTP:
+            method = (option_value([a.lower() for a in args], ["-method"]) or "").upper()
+            body = any(a.lower() in {"-body", "-infile", "-form"} for a in args)
+            if prog in {"curl", "wget"} and not any(a.lower().startswith("-method") for a in args):
+                found += classify_http(prog, args, cwd)  # curl.exe, not the Invoke-WebRequest alias
+            elif method in WRITE_METHODS or body:
+                found += classify_http("curl", ["-X", "POST"] + [a for a in args if "://" in a])
+    return found
+
+
+PS_CD = {"cd", "set-location", "sl", "chdir", "push-location", "pushd"}
+PS_COPIERS = {"copy-item", "cp", "cpi", "copy", "move-item", "mv", "mi", "move"}
+PS_DELETERS = {"remove-item", "rm", "del", "erase", "ri", "rd", "rmdir", "move-item", "mv", "mi",
+               "move"}
+# .NET file writes: [IO.File]::WriteAllText("…", …), [System.IO.File]::Copy(a, b), …
+PS_DOTNET = re.compile(r"(?i)\[(?:system\.)?io\.(?:file|directory)\]::\s*(\w+)\s*\((.*)")
+PS_ARG = re.compile(r"'((?:[^']|'')*)'|\"([^\"]*)\"|(\$[\w:{}]+[^\s,)]*)")
+
+
+def ps_opt(args, names):
+    """A PowerShell parameter's value, the name matched without case."""
+    for i, a in enumerate(args[:-1]):
+        if a.lower() in names:
+            return args[i + 1]
+    return None
+
+
+def ps_positional(args):
+    out, i = [], 0
+    while i < len(args):
+        if args[i].startswith("-") and len(args[i]) > 1:
+            i += 1 if args[i].lower() in {"-recurse", "-force", "-confirm", "-whatif",
+                                          "-passthru", "-container"} else 2
+            continue
+        out.append(args[i])
+        i += 1
+    return out
+
+
+def tamper_powershell(command, cwd, protected, marks):
+    """A PowerShell statement that writes, moves or deletes a protected path, names the guard's
+    markers, writes git settings, or redirects into such a path — in order, after the cwd an
+    earlier Set-Location / cd moved to; Copy-Item / Move-Item into a directory as DIR/<name>;
+    .NET [IO.File] writes. A `$name = '…'` literal assigned in the command is read where the
+    variable is used; another variable is judged by the names that matter."""
+    plain = re.sub(r"`(.)", r"\1", command)
+    known = {m.group(1).lower(): m.group(3) for m in re.finditer(
+        r"\$(\w+)\s*=\s*(['\"])([^'\"\n]*)\2", plain)}
+
+    def norm(p):
+        p = re.sub(r"\$(\w+)", lambda m: known.get(m.group(1).lower(), m.group(0)), p)
+        p = re.sub(r"^\$(?:env:)?(?:HOME|USERPROFILE)(?=[\\/]|$)", "~", p, flags=re.I)
+        return p.replace("\\", "/")
+
+    def hits(p, deleting=False):
+        p = norm(p)
+        return any(m in fold(p) for m in marks) or touches(p, cwd, protected, deleting)
+
+    for m in PS_DOTNET.finditer(plain):
+        method, rest = m.group(1).lower(), m.group(2)
+        if re.match(r"(?:write|append|copy|move|delete|replace|create|open|set|encrypt)", method):
+            literals = [a or b or c for a, b, c in PS_ARG.findall(rest.split(";")[0])]
+            if any(hits(a.replace("''", "'"), method.startswith(("delete", "move")))
+                   for a in literals):
+                return True
+    for seg in ps_segments(command):
+        prog = ps_program(seg[0])
+        args = seg[1:]
+        if prog in PS_CD:
+            where = ps_opt(args, {"-path", "-literalpath"}) or next(iter(ps_positional(args)), None)
+            if where:
+                cwd = resolve_path(norm(where), cwd) or UNKNOWN_CWD
+            continue
+        if prog == "git" and (config_tamper(args) or any(
+                hits(p) for p in git_file_writes(args, cwd)[0])):
+            return True
+        kind = (ps_opt(args, {"-itemtype", "-type"}) or "").lower()
+        target = ps_opt(args, {"-target", "-value"})
+        if prog in {"new-item", "ni"} and kind in {"symboliclink", "junction", "hardlink"} and \
+                target and link_to_protected(norm(target), cwd, protected):
+            return True
+        if prog == "claude" and {"plugin", "plugins"} & set(seg) and not {
+                "list", "validate", "--help", "-h"} & set(seg):
+            return True
+        paths = [w for w in args if not w.startswith("-")]
+        redirects = [seg[j + 1] for j, w in enumerate(seg[:-1]) if re.fullmatch(r"\d?>>?", w)]
+        redirects += [w.lstrip("0123456789>") for w in seg if re.match(r"^\d?>>?\S", w)]
+        writer = prog in PS_WRITERS
+        for p in redirects + (paths if writer else []):
+            if hits(p, prog in PS_DELETERS):
+                return True
+        if prog in PS_COPIERS:
+            src = ps_opt(args, {"-path", "-literalpath"})
+            dest = ps_opt(args, {"-destination"})
+            pos = ps_positional(args)
+            src = [src] if src else pos[:1]
+            dest = dest or (pos[1] if len(pos) > 1 else None)
+            if dest:
+                parts = [norm(p) for p in src + [dest]]
+                if any(hits(t) for t in copy_targets(parts)) or (
+                        "-recurse" in {a.lower() for a in args} and
+                        fills_protected_dir(parts, "cp", cwd, protected)):
+                    return True
+        if writer is False and prog not in READERS and any(m in fold(w) for w in seg for m in marks):
+            return True
+    return False
 
 
 # --- tampering with the guard -------------------------------------------------------------
 
 CONFIG_DIR = os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude")
 PLUGIN_ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-SETTINGS_NAME = re.compile(r"^(?:settings[^/]*|managed-settings)\.json$")
+SETTINGS_NAME = re.compile(r"^(?:settings[^/]*|managed-settings)\.json$", re.I)
+
+
+def fold(path):
+    """A path compared as the file system does on macOS and Windows: without case
+    (`.GIT/config` is `.git/config` there). On a case-sensitive file system this only refuses a
+    few more names."""
+    return path.lower() if isinstance(path, str) else path
 
 
 def settings_file(path, cwd=None):
@@ -1831,13 +3315,13 @@ def settings_file(path, cwd=None):
         return False
     written = os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(path)))
     real = os.path.realpath(written)
-    config = {os.path.abspath(CONFIG_DIR), os.path.realpath(CONFIG_DIR)}
-    for p in (written, real):
+    config = {fold(os.path.abspath(CONFIG_DIR)), fold(os.path.realpath(CONFIG_DIR))}
+    for p in (fold(written), fold(real)):
         name, parent = os.path.basename(p), os.path.dirname(p)
         if SETTINGS_NAME.match(name) and (name.startswith("managed-") or parent in config
                                           or os.path.basename(parent) == ".claude"):
             return True
-    return real in known_settings(cwd)
+    return fold(real) in known_settings(cwd)
 
 
 _KNOWN_SETTINGS = {}
@@ -1856,7 +3340,7 @@ def known_settings(cwd):
                 names = os.listdir(d)
             except OSError:
                 continue
-            found |= {os.path.realpath(os.path.join(d, n)) for n in names
+            found |= {fold(os.path.realpath(os.path.join(d, n))) for n in names
                       if SETTINGS_NAME.match(n)}
         _KNOWN_SETTINGS[cwd] = found
     return _KNOWN_SETTINGS[cwd]
@@ -1879,19 +3363,22 @@ def protected_paths(data):
     transcript = (data or {}).get("transcript_path")
     if isinstance(transcript, str) and transcript.endswith(".jsonl"):
         paths += [transcript, transcript[:-len(".jsonl")]]  # and its subagent transcripts
-    return [os.path.realpath(os.path.expanduser(p)) for p in paths]
+    return [fold(os.path.realpath(os.path.expanduser(p))) for p in paths]
 
 
 def session_marks(data):
     """Strings that name this session's transcript or the guard's markers wherever they appear."""
     session = re.sub(r"[^A-Za-z0-9_-]", "", (data or {}).get("session_id") or "")
-    return ["task-runs/.guard"] + ([session + ".jsonl"] if len(session) >= 8 else [])
+    return ["task-runs/.guard"] + ([fold(session) + ".jsonl"] if len(session) >= 8 else [])
+
+
+UNKNOWN_CWD = "$PWD"  # after a `cd` the guard cannot follow: relative paths are judged by name
 
 
 def resolve_path(token, cwd):
     token = re.sub(r"^\$\{?HOME\}?(?=/|$)", os.path.expanduser("~"), token)
     token = os.path.expanduser(token)
-    if "$" in token or "`" in token:
+    if "$" in token or "`" in token or cwd == UNKNOWN_CWD and not os.path.isabs(token):
         return None
     return os.path.realpath(os.path.join(cwd or os.getcwd(), token))
 
@@ -1899,18 +3386,24 @@ def resolve_path(token, cwd):
 def touches(token, cwd, protected, deleting):
     """Whether writing (deleting, when `deleting`) the path `token` reaches a protected path."""
     path = resolve_path(token, cwd)
-    if path is None:  # $VAR we cannot expand: judge by the words
-        return bool(re.search(r"task-runs|\.guard|\.claude/plugins|/hooks|guard\.py|\.jsonl|"
-                              r"settings", token)) and (deleting or "task-runs" not in token
-                                                         or ".guard" in token)
+    if path is None:  # $VAR we cannot expand: judge by the names that matter only
+        return bool(re.search(r"(?:^|/)\.guard(?:/|$)|\.claude/plugins(?:/|$)|(?:^|/)(?:settings[^/]*|"
+                              r"managed-settings)\.json$|(?:^|/)guard\.py$|skills/ticket(?:/|$)|"
+                              r"hooks/(?:hooks\.json|subagent-guard\.sh)$", token, re.I)) or \
+            not deleting and bool(GIT_SETTINGS_NAME.search(token)) or \
+            deleting and bool(re.search(r"(?:^|/)task-runs/?$", token, re.I))
     written = re.sub(r"^\$\{?HOME\}?(?=/|$)", os.path.expanduser("~"), token)
     if settings_file(written, cwd) or settings_file(path, cwd):
+        return True
+    if not deleting and (git_settings_file(path, cwd) or git_settings_file(
+            os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(written))), cwd)):
         return True
     glob = re.search(r"[*?\[]", path)
     if glob:
         base = os.path.dirname(path[:glob.start()] + "x")
         if touches(base + "/x", cwd, protected, False):
             return True
+    path = fold(path)
     for p in protected:
         if path == p or path.startswith(p + "/"):
             return True
@@ -1920,6 +3413,70 @@ def touches(token, cwd, protected, deleting):
                                                                        if deleting else []))):
             return True
     return False
+
+
+# git's own settings and hooks, by name: <gitdir>/config, config.worktree, hooks/*,
+# info/attributes (also under worktrees/ and modules/), ~/.gitconfig, ~/.config/git/config
+GIT_SETTINGS_NAME = re.compile(
+    r"(?:^|/)\.git/(?:[^/]+/)*(?:config|config\.worktree|hooks/[^/]+|info/attributes)$|"
+    r"(?:^|/)\.gitconfig$|(?:^|/)git/config$|(?:^|/)\.git/(?:[^/]+/)*hooks/?$|"
+    r"(?:^|/)gh/config\.yml$|(?:^|/)GitHub CLI/config\.yml$", re.I)
+# a driver git runs as a program; Git LFS (filter=lfs diff=lfs merge=lfs) and the built-in merge
+# drivers run nothing the user has not installed
+GIT_ATTR_DRIVER = re.compile(r"(?:^|[\s\\'\"])(?:filter|diff|merge)\s*=\s*"
+                             r"(?!(?:lfs|text|binary|union)(?![\w.-]))", re.M)
+
+
+def global_git_files():
+    home = os.path.expanduser("~")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    files = [os.path.join(home, ".gitconfig"), os.path.join(xdg, "git", "config"),
+             os.path.join(home, ".config", "git", "config"), "/etc/gitconfig"]
+    if os.environ.get("GIT_CONFIG_GLOBAL"):
+        files.append(os.path.expanduser(os.environ["GIT_CONFIG_GLOBAL"]))
+    files.append(gh_config_file())  # gh aliases
+    return {fold(os.path.realpath(f)) for f in files}
+
+
+def git_settings_file(path, cwd):
+    """Whether writing `path` changes git's settings or hooks: a config of the repository, any
+    worktree or submodule, a hook (also under core.hooksPath), info/attributes, the global
+    config. Checked by name and against this repository's git dirs."""
+    if not path:
+        return False
+    if GIT_SETTINGS_NAME.search(path):
+        return True
+    real = fold(os.path.realpath(path))
+    if real in global_git_files():
+        return True
+    dirs, hooks = git_dirs(cwd)
+    if any(real == h or real.startswith(h + "/") for h in hooks):
+        return True
+    for d in dirs:
+        if real.startswith(d + "/") and re.fullmatch(
+                r"(?:(?:worktrees|modules)/.+/)?(?:config|config\.worktree|hooks/[^/]+|hooks|"
+                r"info/attributes)", real[len(d) + 1:]):
+            return True
+    return False
+
+
+_GIT_DIRS = {}
+
+
+def git_dirs(cwd):
+    """(this repository's git dir and common dir, its core.hooksPath dir) as real paths."""
+    if cwd not in _GIT_DIRS:
+        dirs, hooks = set(), set()
+        if cwd and cwd != UNKNOWN_CWD:
+            for args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                out = git_query(args, cwd, None)
+                if out:
+                    dirs.add(fold(os.path.realpath(os.path.join(cwd, out))))
+            out = git_query(["config", "--get", "core.hooksPath"], cwd, None)
+            if out:
+                hooks.add(fold(os.path.realpath(os.path.join(cwd, os.path.expanduser(out)))))
+        _GIT_DIRS[cwd] = (dirs, hooks)
+    return _GIT_DIRS[cwd]
 
 
 def ancestors(path):
@@ -1937,12 +3494,263 @@ def shell_tokens(command):
     return list(lexer)
 
 
+def copy_parts(args, prog="cp"):
+    """(destination, sources) of cp / mv / install / ln / rsync, or (None, [])."""
+    positional, target, i = [], None, 0
+    dash_t = prog in {"cp", "mv", "install", "ln", "gcp", "gmv"}  # rsync -t keeps times
+    while i < len(args):
+        a = args[i]
+        if dash_t and a in {"-t", "--target-directory"} and i + 1 < len(args):
+            target, i = args[i + 1], i + 2
+            continue
+        if a.startswith("--target-directory="):
+            target = a.split("=", 1)[1]
+        elif dash_t and a.startswith("-t") and len(a) > 2 and not a.startswith("--"):
+            target = a[2:]
+        elif not a.startswith("-"):
+            positional.append(a)
+        i += 1
+    if target is None:
+        if len(positional) < 1:
+            return None, []
+        target, positional = positional[-1], positional[:-1]
+    return target, positional
+
+
+def copy_targets(args, prog="cp"):
+    """What cp / mv / install / ln / rsync write: the destination, and DIR/<name> of each source
+    when it is a directory (`cp x/settings.json ~/.claude/`, `cp -t ~/.claude x/settings.json`)."""
+    target, sources = copy_parts(args, prog)
+    if target is None:
+        return []
+    names = {os.path.basename(p.rstrip("/")) for p in sources if p.rstrip("/")}
+    return [target] + [os.path.join(target, n) for n in sorted(names)]
+
+
+def fills_protected_dir(args, prog, cwd, protected):
+    """A directory's contents copied into the config dir, or into a directory of the config dir or
+    the plugin that holds a protected path: `cp -r x/ ~/.claude/`, `rsync -a evil/ ~/.claude/` —
+    whatever the source holds, settings.json included, lands there."""
+    target, sources = copy_parts(args, prog)
+    dest = resolve_path(target, cwd) if target else None
+    if dest is None:
+        return False
+    contents = [p for p in sources if re.search(r"/\.?$|/\*$", p) or
+                os.path.isdir(resolve_path(p, cwd) or "")]
+    if not contents:
+        return False
+    config, root, dest = fold(os.path.realpath(CONFIG_DIR)), fold(PLUGIN_ROOT), fold(dest)
+    inside = dest == config or dest.startswith((config + "/", root + "/")) or dest == root
+    return inside and (dest == config or any(p == dest or p.startswith(dest.rstrip("/") + "/")
+                                              for p in protected))
+
+
+def link_to_protected(src, cwd, protected):
+    """Whether a link made to `src` reaches a protected path, git's settings or a settings dir:
+    `ln -s .git x` and then `echo … > x/config` in the same command writes .git/config through a
+    name the guard does not know yet."""
+    if re.search(r"(?:^|[/\\])\.(?:git|claude)(?:[/\\]|$)", src, re.I):
+        return True
+    path = resolve_path(src, cwd)
+    if path is None:
+        return False
+    f = fold(path).rstrip("/") or "/"
+    dirs, hooks = git_dirs(cwd)
+    reach = set(protected) | dirs | hooks | global_git_files() | {
+        fold(os.path.realpath(CONFIG_DIR))}
+    return any(r == f or r.startswith(f + "/") or f.startswith(r + "/") for r in reach) or \
+        touches(src, cwd, protected, False)
+
+
+# git that writes files where an option or a patch says, beyond its own worktree
+GIT_OUTPUT_SUBS = {"diff", "log", "show", "diff-tree", "diff-index", "diff-files", "range-diff",
+                   "whatchanged", "archive"}
+GIT_PATH_WRITERS = GIT_OUTPUT_SUBS - {"diff", "log", "show"} | {
+    "checkout-index", "apply", "am", "bundle", "format-patch"}
+TAR_VALUE_LETTERS = set("fCbTXKLNgV")  # tar letters that take a value (`tar -C dir -xf a.tar`)
+
+
+def git_split(args):
+    """(the -C directory or None, the subcommand, its arguments) of `git <args>`."""
+    dash_c, i = None, 0
+    while i < len(args) and args[i].startswith("-"):
+        opt = args[i].split("=", 1)[0]
+        if opt in GIT_OPTS_WITH_VALUE:
+            if opt == "-C" and i + 1 < len(args):
+                dash_c = os.path.join(dash_c, args[i + 1]) if dash_c else args[i + 1]
+            i += 1 if "=" in args[i] and opt.startswith("--") else 2
+        else:
+            i += 1
+    return dash_c, (args[i] if i < len(args) else ""), args[i + 1:]
+
+
+def opt_values(args, longs, shorts=()):
+    """The values of `--long=v`, `--long v`, `-s v` and `-sv` up to `--`."""
+    out, j = [], 0
+    while j < len(args) and args[j] != "--":
+        a, nxt = args[j], args[j + 1] if j + 1 < len(args) else ""
+        name, eq, value = a.partition("=")
+        if a.startswith("--") and name in longs:
+            out.append(value if eq else nxt)
+            j += 0 if eq else 1
+        elif a in shorts:
+            out.append(nxt)
+            j += 1
+        elif any(a.startswith(sh) and len(a) > len(sh) for sh in shorts):
+            out.append(a[2:])
+        j += 1
+    return out
+
+
+def patch_paths(text, strip):
+    """The paths a patch (or an mbox of them) creates, changes, deletes or renames, with
+    `strip` leading components taken off as `git apply -p<strip>` does."""
+    out = []
+
+    def cut(p):
+        parts = p.strip('"').split("/")
+        return "/".join(parts[strip:]) if len(parts) > strip else None
+
+    for m in re.finditer(r"^(?:(?:\+\+\+|---) (\S+)|diff --git (\S+) (\S+)|"
+                         r"(?:rename|copy) (?:from|to) (.+))$", text, re.M):
+        for p in m.group(1, 2, 3):
+            if p and p != "/dev/null" and cut(p):
+                out.append(cut(p))
+        if m.group(4):
+            out.append(m.group(4).strip())
+    return out
+
+
+def git_file_writes(args, cwd):
+    """Files `git <args>` writes at a path an option or a patch names: checkout-index
+    --prefix (each tracked file under it), archive / diff / log --output, format-patch -o,
+    bundle create, apply / am with the paths inside the patch under --directory. Returns
+    (paths to check as written, what the guard cannot read — a path built at run time, a
+    --directory outside the repository, a patch it cannot open — or None)."""
+    dash_c, sub, rest = git_split(args)
+    where = os.path.join(cwd or os.getcwd(), os.path.expanduser(dash_c)) if dash_c else \
+        (cwd or os.getcwd())
+    out, unread = [], []
+    lit = lambda v: bool(v) and not re.search(r"[$`]", v)  # noqa: E731
+    at = lambda p: os.path.join(where, os.path.expanduser(p))  # noqa: E731
+    named = []
+    if sub == "checkout-index":
+        named = opt_values(rest, {"--prefix"})
+    elif sub in GIT_OUTPUT_SUBS:
+        named = opt_values(rest, {"--output"}, ("-o",) if sub == "archive" else ())
+    elif sub == "format-patch":
+        named = [os.path.join(d, "x") for d in opt_values(rest, {"--output-directory"}, ("-o",))]
+    elif sub == "bundle" and rest[:1] == ["create"] and len(rest) > 1:
+        named = [next((a for a in rest[1:] if not a.startswith("-")), "-")]
+        named = [] if named == ["-"] else named
+    for p in named:
+        if not lit(p):
+            unread.append(f"{sub} … {p[:40]}")
+        elif sub != "checkout-index":
+            out.append(at(p))
+        else:
+            values = {v for v in opt_values(rest, {"--prefix"})}
+            files = [a for a in rest if not a.startswith("-") and a not in values]
+            if not files or {"-a", "--all", "--stdin"} & set(rest):
+                files += (git_query(["ls-files"], where, None) or "").splitlines()[:5000]
+            # `config` too: the tracked files may not be listed (a stage, --stdin, no repo)
+            out += [at(p + f) for f in files + ["x", "config"]]
+    if sub in {"apply", "am"}:
+        top = git_query(["rev-parse", "--show-toplevel"], where, None) or where
+        directory = (opt_values(rest, {"--directory"}) or [""])[-1]
+        strip = (opt_values(rest, set(), ("-p",)) or ["1"])[-1]
+        strip = int(strip) if strip.isdigit() else 1
+        root = os.path.normpath(os.path.join(top, directory))
+        if directory and not lit(directory):
+            unread.append(f"{sub} --directory={directory[:40]}")
+        elif directory and not (root == os.path.normpath(top) or
+                                root.startswith(os.path.normpath(top) + os.sep)):
+            unread.append(f"{sub} --directory={directory[:40]} (outside the repository)")
+        values = {v for v in opt_values(rest, {"--directory", "--exclude", "--include",
+                                               "--whitespace", "--build-fake-ancestor",
+                                               "--patch-format", "--resolvemsg"})}
+        patches = [a for a in rest if not a.startswith("-") and a not in values]
+        if not patches and "--unsafe-paths" in rest:
+            unread.append(f"{sub} --unsafe-paths with a patch from stdin")
+        for f in patches:
+            text = read_text(f, where, 8 << 20)
+            if text is None:
+                unread.append(f"{sub} {f[:40]} (a patch the guard cannot read)")
+                continue
+            paths = patch_paths(text, strip)
+            out += [os.path.join(root, p) for p in paths]
+            if any(os.path.basename(p) == ".gitattributes" for p in paths) and \
+                    GIT_ATTR_DRIVER.search(text):
+                out.append(os.path.join(top, ".git", "info", "attributes"))  # a filter driver
+    return out, ("; ".join(unread) or None)
+
+
+def tar_parts(args):
+    """(whether `tar <args>` extracts, the -C directory or None, the -f archive or None)."""
+    extract, directory, archive = False, None, None
+    if args and re.fullmatch(r"[A-Za-z]+", args[0]):  # old style: `tar xzf a.tar -C dir`
+        bundle, rest, k = args[0], args[1:], 0
+        extract = "x" in bundle
+        for ch in bundle:
+            if ch in TAR_VALUE_LETTERS and k < len(rest):
+                directory = rest[k] if ch == "C" else directory
+                archive = rest[k] if ch == "f" else archive
+                k += 1
+        args = rest[k:]
+    j = 0
+    while j < len(args):
+        a, nxt = args[j], args[j + 1] if j + 1 < len(args) else None
+        name, eq, value = a.partition("=")
+        if a in {"-x", "--extract", "--get"}:
+            extract = True
+        elif name in {"--directory", "--file"}:
+            v = value if eq else nxt
+            j += 0 if eq else 1
+            directory, archive = (v, archive) if name == "--directory" else (directory, v)
+        elif re.fullmatch(r"-[A-Za-z]+", a):
+            letters = a[1:]
+            extract = extract or "x" in letters
+            for n, ch in enumerate(letters):
+                if ch in TAR_VALUE_LETTERS:
+                    v = letters[n + 1:] or nxt
+                    j += 0 if letters[n + 1:] else 1
+                    directory = v if ch == "C" else directory
+                    archive = v if ch == "f" else archive
+                    break
+        j += 1
+    return extract, directory, archive
+
+
+def tar_written(args, cwd, piped_from):
+    """The paths `tar -x` writes: each member of an archive it can read, each tracked file under
+    the --prefix of a `git archive` piped into it, else only DIR/x."""
+    _, directory, archive = tar_parts(args)
+    dest = os.path.join(cwd or os.getcwd(), os.path.expanduser(directory or "."))
+    names = ["x"]
+    if archive and archive != "-":
+        path = resolve_path(archive, cwd)
+        try:
+            with tarfile.open(path) as t:
+                names += t.getnames()[:5000]
+        except (OSError, tarfile.TarError, TypeError, ValueError, EOFError):
+            pass
+    elif piped_from and os.path.basename(piped_from[skip_prefix(piped_from)]).lower() == "git":
+        gargs = piped_from[skip_prefix(piped_from) + 1:]
+        dash_c, sub, rest = git_split(gargs)
+        if sub == "archive":
+            prefix = (opt_values(rest, {"--prefix"}) or [""])[-1]
+            where = os.path.join(cwd or os.getcwd(), dash_c) if dash_c else cwd
+            names += [prefix + f for f in ["x"] + (git_query(
+                ["ls-files"], where, None) or "").splitlines()[:5000]]
+    return [os.path.join(dest, n) for n in names]
+
+
 def tamper_shell(command, cwd, protected, marks, depth=0):
     if depth > 4:
         return False
 
     def hits(token, cwd, protected, deleting):
-        return any(m in token for m in marks) or touches(token, cwd, protected, deleting)
+        return any(m in fold(token) for m in marks) or touches(token, cwd, protected, deleting)
 
     command, fed, _ = strip_heredocs(command.replace("\\\n", " "))
     if any(tamper_shell(b, cwd, protected, marks, depth + 1) for b in fed):
@@ -1953,8 +3761,8 @@ def tamper_shell(command, cwd, protected, marks, depth=0):
     try:
         tokens = shell_tokens(command)
     except ValueError:
-        return any(m in command for m in marks)
-    segments, segment, redirect = [], [], False
+        return any(m in fold(command) for m in marks)
+    segments, segment, targets, redirect, piped = [], [], [], False, []
     for t in tokens:
         if t and set(t) <= set(";&|()<>"):
             if ">" in t:
@@ -1962,26 +3770,36 @@ def tamper_shell(command, cwd, protected, marks, depth=0):
                 continue
             if "<" in t:
                 continue
-            if segment:
-                segments.append(segment)
-            segment = []
+            if segment or targets:
+                segments.append((segment, targets))
+                piped.append(t == "|")
+            segment, targets = [], []
         elif redirect:
             redirect = False
-            if not t.startswith("&") and hits(t, cwd, protected, False):
-                return True
+            if not t.startswith("&"):
+                targets.append(t)
         else:
             segment.append(t)
-    if segment:
-        segments.append(segment)
-    for seg in segments:
+    if segment or targets:
+        segments.append((segment, targets))
+    for k, (seg, targets) in enumerate(segments):  # in order: a `cd` moves where later relative
+        if any(hits(t, cwd, protected, False) for t in targets):  # paths land
+            return True
         i = skip_prefix(seg)
         if i >= len(seg):
             continue
         prog, args = os.path.basename(seg[i]).lower(), seg[i + 1:]
         paths = [a for a in args if not a.startswith("-")]
         if prog in {"cd", "pushd"} and paths:
-            cwd = resolve_path(paths[0], cwd) or cwd
+            cwd = resolve_path(paths[0], cwd) or UNKNOWN_CWD  # `cd "$X"`: judged by name after
             continue
+        if prog == "ln" and any(link_to_protected(src, cwd, protected)
+                                for src in copy_parts(args, prog)[1]):
+            return True
+        if prog in COPIERS | {"mv"} and (any(hits(t, cwd, protected, False)
+                                             for t in copy_targets(args, prog)) or
+                                         fills_protected_dir(args, prog, cwd, protected)):
+            return True
         if prog in SHELLS or prog == "eval" or "$" in seg[i]:  # `$SHELL -c "…"` too
             carrier = " ".join(args) if prog == "eval" else next(
                 (args[j + 1] for j, a in enumerate(args[:-1])
@@ -1991,8 +3809,6 @@ def tamper_shell(command, cwd, protected, marks, depth=0):
         if prog in DELETERS and any(hits(a, cwd, protected, True) for a in paths):
             return True
         if prog in MODIFIERS and any(hits(a, cwd, protected, False) for a in paths):
-            return True
-        if prog in COPIERS and paths and hits(paths[-1], cwd, protected, False):
             return True
         if prog in IN_PLACE and any(re.match(r"^-[a-z]*i", a) or a.startswith("--in-place")
                                     for a in args) and \
@@ -2016,19 +3832,51 @@ def tamper_shell(command, cwd, protected, marks, depth=0):
         if prog == "claude" and {"plugin", "plugins"} & set(args) and not {
                 "list", "validate", "--help", "-h"} & set(args):
             return True
+        if prog == "git" and config_tamper(args):
+            return True
+        if prog == "git" and any(hits(p, cwd, protected, False)
+                                 for p in git_file_writes(args, cwd)[0]):
+            return True  # checkout-index --prefix=.git/hooks/, apply --directory=…, -o …
+        if prog in {"tar", "gtar", "bsdtar"} and tar_parts(args)[0] and any(
+                hits(p, cwd, protected, False) for p in tar_written(
+                    args, cwd, segments[k - 1][0] if k and piped[k - 1] else None)):
+            return True  # git archive --prefix=.git/hooks/ HEAD | tar -x
         if prog == "git":
             dash_c = option_value(args, ["-C"])
             where = resolve_path(dash_c, cwd) if dash_c else os.path.realpath(cwd or os.getcwd())
+            where = fold(where)
             if where and any(where == p or where.startswith(p + "/") for p in protected) and \
                     GIT_VOCAB.search(" ".join(args)):
                 return True
         if prog not in READERS | DELETERS | MODIFIERS | COPIERS and \
-                any(m in a for a in args for m in marks):
+                any(m in fold(a) for a in args for m in marks):
             return True  # an interpreter or tool we do not know, pointed at the markers
     return False
 
 
 HOOK_SETTINGS = ("hooks", "disableAllHooks", "enabledPlugins", "allowManagedHooksOnly")
+
+
+def attributes_file(path):
+    """A .gitattributes, or the global attributes file (~/.config/git/attributes)."""
+    return os.path.basename(fold(path)) == ".gitattributes" or bool(
+        re.search(r"(?:^|/)git/attributes$", path, re.I))
+
+
+GIT_ATTR_WRITE = re.compile(
+    r"(?i)(?:>>?|\btee\b|\b(?:cp|mv|install|ln|rsync|ditto|copy-item|move-item|cpi|mi|copy|"
+    r"move|set-content|add-content|out-file|sc|ac)\b)[^;&|\n]*?(?:^|[\s'\"=/\\])"
+    r"(?:\.gitattributes|git[/\\]attributes)(?=$|[\s'\";&|)])", re.M)
+GIT_ATTR_COPY = re.compile(r"(?i)\b(?:cp|mv|install|ln|rsync|ditto|copy-item|move-item|cpi|mi|"
+                           r"copy|move)\b[^;&|\n]*?\.gitattributes")
+
+
+def attributes_write(command):
+    """A shell or PowerShell write to a .gitattributes that names a filter / diff / merge driver
+    (`echo '* filter=x' >> .gitattributes`), or a copy over one whose text it cannot see."""
+    if not GIT_ATTR_WRITE.search(command):
+        return False
+    return bool(GIT_ATTR_DRIVER.search(command) or GIT_ATTR_COPY.search(command))
 
 
 def settings_change(tool_name, inp, path):
@@ -2073,19 +3921,138 @@ def tamper(tool_name, tool_input, data):
     cwd = (data or {}).get("cwd")
     hit = False
     if tool_name in {"Bash", "Monitor"}:
-        hit = tamper_shell(inp.get("command") or "", cwd, protected, marks)
+        hit = tamper_shell(inp.get("command") or "", cwd, protected, marks) or \
+            attributes_write(str(inp.get("command") or ""))
+    elif tool_name == "PowerShell":
+        hit = tamper_powershell(str(inp.get("command") or ""), cwd, protected, marks) or \
+            attributes_write(str(inp.get("command") or ""))
     elif tool_name in {"Write", "Edit", "NotebookEdit"}:
         path = inp.get("file_path") or inp.get("notebook_path") or ""
         if isinstance(path, str) and path:
             resolved = resolve_path(path, cwd) or path
-            if settings_file(path, cwd):
+            if attributes_file(path):
+                text = inp.get("content") if tool_name == "Write" else inp.get("new_string")
+                hit = not isinstance(text, str) or bool(GIT_ATTR_DRIVER.search(text))
+            elif settings_file(path, cwd):
                 hit = settings_change(tool_name, inp, resolved)
             else:
-                hit = touches(path, cwd, protected, False) or any(m in resolved for m in marks)
+                hit = touches(path, cwd, protected, False) or any(m in fold(resolved) for m in marks)
     if hit:
         return [("tamper", f"{tool_name} on the guard itself, its markers, the session "
-                           "transcript, the plugin install or the hooks settings")]
+                           "transcript, the plugin install, the hooks settings or a git setting "
+                           "that redirects a push or redefines a git command")]
     return []
+
+
+BODY_NAMES = re.compile(r"(?:^|[/\\'\"=@:\s])(?:PR-BODY|RUN)\.md(?![\w.-])", re.I)
+BODY_READERS = {"cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "wc",
+                "sha256sum", "shasum", "md5", "md5sum", "cksum", "diff", "cmp", "ls", "stat",
+                "test", "[", "file", "bat", "echo", "printf", "cd", "pushd", "popd", "true",
+                "false", "pwd", "sleep", "date", "basename", "dirname", "realpath", "which"}
+# git that only reads or sends: it writes no file, whatever its arguments
+GIT_NO_FILES = {"push", "fetch", "status", "log", "rev-parse", "show-ref", "branch", "remote",
+                "ls-remote", "describe", "symbolic-ref", "rev-list", "merge-base", "diff", "show"}
+NOT_LITERAL = re.compile(r"[$`{}*?\[]")
+
+
+def body_writer_segment(seg):
+    """Whether a statement in the same command as a PR write may write PR-BODY.md or RUN.md.
+    Only plain reads pass, with gh and git that write no file: anything else (cp, tee, sed,
+    python, tar, a function or an alias defined on the spot, a name built from `$P` or
+    `PR-BODY.{md,x}`) may write it while the command runs, after the guard checked the file."""
+    i = skip_prefix(seg)
+    if i >= len(seg):
+        return False  # `P=…`: an assignment writes no file
+    if seg[0:i] and any(re.match(r"^GIT_(?:DIR|WORK_TREE)=", t) for t in seg[:i]):
+        return True
+    prog, args = os.path.basename(seg[i]).lower(), seg[i + 1:]
+    if any(BODY_NAMES.search(" " + t) for t in seg[i + 1:]) and prog not in BODY_READERS | {"gh"}:
+        return True
+    if prog in BODY_READERS:
+        return False
+    if prog == "gh":
+        return any(a in {"download", "-D", "--dir", "-O", "--output", "--clobber"} or
+                   a.startswith(("--dir=", "--output=")) for a in args)
+    if prog == "git":
+        if any(a in {"-C", "--work-tree", "--git-dir", "-c"} or
+               a.startswith(("--work-tree=", "--git-dir=", "--output", "-o")) for a in args):
+            return True
+        sub = git_split(args)[1]
+        if sub in GIT_PATH_WRITERS or any(a.startswith("--output") for a in args):
+            return True  # checkout-index --prefix=<run>/, apply --directory=…, archive -o …
+        return sub not in GIT_NO_FILES and any(NOT_LITERAL.search(a) for a in args)
+    return True
+
+
+def body_written_shell(command, depth=0):
+    """Whether a shell command that writes a PR may also write PR-BODY.md or RUN.md: a redirect
+    into it or into a name the guard cannot read (`> $P`, `> PR-BODY.{md,x}`), or a statement
+    body_writer_segment does not pass. Then the file the guard checked before the call is not
+    the one the PR gets: the PR write goes in a command of its own."""
+    if depth > 4:
+        return True
+    command, _, _ = strip_heredocs(command.replace("\\\n", " "))
+    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)|>\(([^()]*)\)", command):
+        if body_written_shell(next(x for x in inner if x), depth + 1):
+            return True
+    try:
+        tokens = shell_tokens(command)
+    except ValueError:
+        return True
+    segment, redirect, segments = [], False, []
+    for t in tokens + [";"]:
+        if t and set(t) <= set(";&|()<>"):
+            if ">" in t:
+                redirect = True
+                continue
+            if "<" in t:
+                continue
+            if segment:
+                segments.append(segment)
+            segment = []
+        elif redirect:
+            redirect = False
+            if BODY_NAMES.search(" " + t) or NOT_LITERAL.search(t):
+                return True
+        else:
+            segment.append(t)
+    for seg in segments:
+        i = skip_prefix(seg)
+        prog = os.path.basename(seg[i]).lower() if i < len(seg) else ""
+        if prog in SHELLS or prog == "eval":
+            return True  # a command carried as a string: its writes are not all readable here
+        if body_writer_segment(seg):
+            return True
+    return False
+
+
+def body_written_powershell(command):
+    """body_written_shell for PowerShell: a redirect into PR-BODY.md, RUN.md or a name built at
+    run time, a .NET file write, or a statement other than a plain read, gh or git."""
+    plain = re.sub(r"`(.)", r"\1", command)
+    readers = {"get-content", "gc", "cat", "type", "get-filehash", "select-string", "sls",
+               "test-path", "write-output", "write-host", "echo", "cd", "set-location", "sl",
+               "push-location", "pop-location", "get-item", "gi", "get-childitem", "ls", "dir",
+               "get-location", "pwd", "start-sleep"}
+    for m in PS_DOTNET.finditer(plain):
+        if not m.group(1).lower().startswith(("read", "exists", "open")):
+            return True
+    if re.search(r"(?i)\[(?:system\.)?(?:io\.|environment\]|diagnostics\.)", plain):
+        return True
+    for seg in ps_segments(command):
+        redirects = [seg[j + 1] for j, w in enumerate(seg[:-1]) if re.fullmatch(r"\d?>>?", w)]
+        redirects += [w for w in seg if re.match(r"^\d?>>?\S", w)]
+        if any(BODY_NAMES.search(" " + w) or NOT_LITERAL.search(w) for w in redirects
+               if not re.fullmatch(r"&\d", w)):
+            return True
+        prog = ps_program(seg[0])
+        if prog in readers:
+            continue
+        if prog in {"gh", "git"} and body_writer_segment(seg):
+            return True
+        if prog not in {"gh", "git"}:
+            return True
+    return False
 
 
 def classify_skill(tool_input):
@@ -2103,14 +4070,31 @@ def classify(tool_name, tool_input, cwd, data=None, state=None):
     found = tamper(tool_name, tool_input, data) if data is not None else []
     if state is not None:
         state.pop("here", None)  # a switch in an earlier call is not a switch in this one
+    checks = BODY_CHECKS
     if tool_name in {"Bash", "Monitor"}:
-        found += classify_shell((tool_input or {}).get("command") or "", cwd, 0, state)
+        command = str((tool_input or {}).get("command") or "")
+        found += classify_shell(command, cwd, 0, state)
+        if BODY_CHECKS > checks and body_written_shell(command):
+            found.append(("pr-body", "PR-BODY.md or RUN.md is written in the same command as "
+                                     "the PR write"))
+    elif tool_name == "PowerShell":
+        command = str((tool_input or {}).get("command") or "")
+        found += classify_powershell(command, cwd)
+        if BODY_CHECKS > checks and body_written_powershell(command):
+            found.append(("pr-body", "PR-BODY.md or RUN.md is written in the same command as "
+                                     "the PR write"))
     elif tool_name.startswith("mcp__"):
         found += classify_mcp(tool_name, tool_input)
     elif tool_name == "Skill":
         found += classify_skill(tool_input)
     elif tool_name == "SendMessage":
         found.append(("delegate", "SendMessage to another agent or session"))
+    elif tool_name == "RemoteTrigger" and str((tool_input or {}).get("action") or "") not in \
+            {"list", "get", "list_runs", "get_run_log"}:
+        found.append(("schedule", "RemoteTrigger (a cloud routine runs outside this session)"))
+    elif tool_name == "CronCreate":
+        found.append(("schedule", "CronCreate (a prompt that runs later, outside the user's "
+                                  "command)"))
     unique, seen = [], set()
     for item in found:
         key = json.dumps(item, ensure_ascii=False, default=str)
@@ -2141,11 +4125,13 @@ HOW = {
     "repo-admin-delete": ("«удали релиз» / «удали гист»",
                           "[repo-admin] and names deleting the release or gist"),
     "history": ("«сбрось» / «подтяни» / «верни стэш»", "[reset]"),
+    "branch-delete": ("«удали ветку» / \"delete the branch\"", "[delete-branch] or [reset]"),
     "status": ("«переведи в ревью» / «закрой задачу»", "[status]"),
     "create-task": ("«создай задачу»", "[create-task]"),
     "tracker": ("«назначь на меня»", "[tracker-edit]"),
     "destructive": ("«удали задачу»", "[delete-task]"),
     "delete": ("«удали коммент»", "[delete-comment]"),
+    "send": ("«отправь письмо» / «напиши в слак» / «создай встречу»", "[send]"),
 }
 
 
@@ -2163,10 +4149,15 @@ STEMS = {"commit": r"комм?ит|commit|мерд?ж|merge", "push": r"пуш|p
          "repo-admin-delete": r"удали|delete",
          "merge": r"мерд?ж|merge", "force": r"форс|force|main|master|мейн|мастер",
          "history": r"сброс|reset|pull|подтян|стэш|стеш|stash|откат|restore|clean",
-         "delete": r"удали|delete", "destructive": r"удали|delete"}
+         "branch-delete": r"удали|снеси|грохни|delete|ветк|бранч|branch",
+         "delete": r"удали|delete", "destructive": r"удали|delete",
+         "send": r"отправ|пошли|перешли|ответь|письм|слак|slack|чат|chat|send|mail|встреч|событи|"
+                 r"meeting|event|invite|приглаш"}
 
 
-def decide(gated, text, actions, approved, used, unseen, failure):
+def decide(gated, text, actions, approved, used, unseen, failure, status=None):
+    """`status`: (refs, open) from read_authorization — a status call changes a task the command
+    named, unless one change of any task is open."""
     problems = []
     # what the latest message itself ordered (a change of plan in it orders nothing)
     ordered = detect(text) if text and not revokes(text) else set()
@@ -2181,6 +4172,13 @@ def decide(gated, text, actions, approved, used, unseen, failure):
             problems.append(f"{what}: this skill would post to the PR or tracker text the guard "
                             "never sees. Run it without the posting flag and show the result; the "
                             "user posts it, or a comment goes through Task comments.")
+        elif action == "pr-body":
+            problems.append(f"{what}. A PR's text is the one the user approved: create or edit "
+                            "it with `--body-file <run_dir>/PR-BODY.md` (publish.md, \"Open a "
+                            "PR\"); a changed text is approved again first.")
+        elif action == "schedule":
+            problems.append(f"{what}: work started this way runs outside this guard; the user "
+                            "confirms it.")
         elif action == "delegate":
             problems.append(f"{what}: another session is outside this guard, so it is not a way "
                             "to run anything the guard refuses here.")
@@ -2208,6 +4206,13 @@ def decide(gated, text, actions, approved, used, unseen, failure):
                     "full (publish.md, Task comments, step 4). Post the text unchanged.")
         elif action == "base-sync" and actions & {"commit", "merge-local"}:
             continue
+        elif action == "status" and action in actions and status and not status[1] and not any(
+                ref_matches(r, item[2] if len(item) > 2 else []) for r in status[0]):
+            named = ", ".join(sorted(status[0]))
+            problems.append(f"{what}: the user's status command named {named[:200]} — this call "
+                            "changes another task, or names it in a way the guard cannot match. "
+                            "Another task needs its own command — typed (e.g. «переведи <id> в "
+                            "ревью») or an AskUserQuestion option whose label carries [status].")
         elif action not in actions:
             typed, tag = HOW[action]
             if action in ordered:
@@ -2268,8 +4273,9 @@ def run_dir_of(path, cwd=None):
 
 
 def note_run(session_id, tool_name, tool_input, cwd):
-    """Record in the marker the run whose RUN.md this call wrote (Write / Edit, or a Bash
-    redirect or tee into it; a bare RUN.md resolves against the last `cd` before it)."""
+    """Record in the marker the run whose RUN.md this call wrote (Write / Edit, a Bash redirect
+    or tee into it, a PowerShell Set-Content / Out-File / redirect; a bare RUN.md resolves
+    against the last `cd` / Set-Location before it)."""
     tool_input = tool_input or {}
     paths = []
     if tool_name in {"Write", "Edit", "MultiEdit", "NotebookEdit"}:
@@ -2281,6 +4287,23 @@ def note_run(session_id, tool_name, tool_input, cwd):
             for d in CD.finditer(command[:m.start()]):
                 where = resolve_path(d.group(1), where) or where
             paths.append((m.group(1), where))
+    elif tool_name == "PowerShell":  # Set-Content / Out-File / a redirect, after Set-Location
+        where = cwd
+        for seg in ps_segments(str(tool_input.get("command") or "")):
+            prog, args = ps_program(seg[0]), seg[1:]
+            words = [re.sub(r"^\$(?:env:)?(?:HOME|USERPROFILE)(?=[\\/]|$)", "~", w,
+                            flags=re.I).replace("\\", "/") for w in seg]
+            if prog in PS_CD:
+                target = ps_opt(args, {"-path", "-literalpath"}) or next(
+                    iter(ps_positional(args)), None)
+                if target:
+                    where = resolve_path(words[seg.index(target)], where) or where
+                continue
+            out = [words[j + 1] for j, w in enumerate(seg[:-1]) if re.fullmatch(r"\d?>>?", w)]
+            out += [w.lstrip("0123456789>") for w in words if re.match(r"^\d?>>?\S", w)]
+            if prog in PS_WRITERS:
+                out += [w for w in words[1:] if not w.startswith("-")]
+            paths += [(w, where) for w in out if os.path.basename(w) == "RUN.md"]
     path = marker(session_id)
     for p, where in reversed(paths):
         run = run_dir_of(p, where)
@@ -2333,22 +4356,33 @@ def deny(reason, decision="deny"):
                                              "permissionDecisionReason": reason}}))
 
 
-ASK_DELEGATE = ("[ticket guard] SendMessage hands work to another agent or session, which this "
-                "guard does not watch. The user confirms it.")
+# kinds the user confirms at the permission prompt in the main session; subagents are refused
+ASK_KINDS = {
+    "delegate": "[ticket guard] SendMessage hands work to another agent or session, which this "
+                "guard does not watch. The user confirms it.",
+    "schedule": "[ticket guard] RemoteTrigger and CronCreate start work later or in the cloud, "
+                "where this guard does not watch and no command of the user stands behind it. The "
+                "user confirms it.",
+}
 
 
 def main():
     global RUN_DIR
     mode = sys.argv[1] if len(sys.argv) > 1 else "--main"
+    if mode == "--post":  # PostToolUse: the call ran, so its RUN.md is this session's run
+        try:  # it only notes the run: whatever goes wrong, it says nothing and blocks nothing
+            data = json.loads(sys.stdin.read())
+            if isinstance(data, dict) and not data.get("agent_id"):
+                note_run(data.get("session_id"), data.get("tool_name", ""),
+                         data.get("tool_input"), data.get("cwd"))
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
     raw = sys.stdin.read()
     try:
         data = json.loads(raw)
         tool_name = data.get("tool_name", "")
         session, agent = data.get("session_id"), data.get("agent_id")
-        if mode == "--post":  # PostToolUse: the call ran, so its RUN.md is this session's run
-            if not agent:
-                note_run(session, tool_name, data.get("tool_input"), data.get("cwd"))
-            return 0
         if mode == "--subagent":
             path = marker(session)
             if not agent or not path or not os.path.exists(path):
@@ -2366,15 +4400,16 @@ def main():
             gated = [g for g in gated if g[0] not in SUBAGENT_ONLY]
             if not gated:
                 return 0
-            if {g[0] for g in gated} == {"delegate"}:
-                deny(ASK_DELEGATE, "ask")  # not refused: the user decides at the prompt
-                return 0
+            if {g[0] for g in gated} <= set(ASK_KINDS):
+                deny(" ".join(ASK_KINDS[k] for k in sorted({g[0] for g in gated})), "ask")
+                return 0  # not refused: the user decides at the prompt
             text, actions, approved, used, unseen, failure = read_authorization(
                 data.get("transcript_path"), cwd)
-            reason = decide(gated, text, actions, approved, used, unseen, failure)
+            reason = decide(gated, text, actions, approved, used, unseen, failure, STATUS_LEFT)
     except Exception as exc:  # fail closed for anything that looks gated
         if not re.search(r"\bgit\b|\bgh\b|commit|push|merge|rebase|comment|status|mcp__|curl|"
-                         r"\.guard|SendMessage|--comment|--post|settings|hooks", raw, re.I):
+                         r"\.guard|SendMessage|--comment|--post|settings|hooks|PowerShell|RemoteTrigger|"
+                         r"CronCreate|webhook", raw, re.I):
             return 0
         if mode == "--subagent" and '"agent_id"' not in raw:
             return 0

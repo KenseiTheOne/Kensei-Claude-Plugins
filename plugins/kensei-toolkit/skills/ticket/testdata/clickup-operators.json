@@ -1,0 +1,324 @@
+{
+ "checked": "2026-10-01",
+ "claude_code": "2.1.286",
+ "server": "clickup (MCP, claude.ai connector)",
+ "operators": {
+  "call": "clickup_get_operators with no filter, and with models [Task, Comment, task, comment]",
+  "response": "No enabled operators match the request. Enabled operators: none",
+  "enabled": [],
+  "reads": [],
+  "writes": [],
+  "create_task": [],
+  "comments": [],
+  "status": [],
+  "note": "The catalogue is empty on this server, so reads_only()/classify_operator() still rest on name patterns; re-run when operators appear."
+ },
+ "dedicated_tools": [
+  {
+   "tool": "mcp__clickup__clickup_add_tag_to_task",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_add_task_dependency",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_add_task_link",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_add_task_to_list",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_add_time_entry",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_attach_task_file",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_comment",
+   "role": "comment",
+   "guard_class": "comment"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_document",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_document_page",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_folder",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_list",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_list_in_folder",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_reminder",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_task",
+   "role": "create-task",
+   "guard_class": "create-task"
+  },
+  {
+   "tool": "mcp__clickup__clickup_create_task_comment",
+   "role": "comment",
+   "guard_class": "comment"
+  },
+  {
+   "tool": "mcp__clickup__clickup_delete_comment",
+   "role": "delete",
+   "guard_class": "delete"
+  },
+  {
+   "tool": "mcp__clickup__clickup_delete_task",
+   "role": "destructive",
+   "guard_class": "destructive"
+  },
+  {
+   "tool": "mcp__clickup__clickup_download_document_page_attachment",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_download_task_attachment",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_execute_operator",
+   "role": "operator",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_filter_tasks",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_find_member_by_name",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_bulk_tasks_time_in_status",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_chat_channel_messages",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_chat_channels",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_chat_message_replies",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_current_time_entry",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_custom_fields",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_document_pages",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_folder",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_list",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_operators",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_schema",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_task",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_task_comments",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_task_time_in_status",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_threaded_comments",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_time_entries",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_workspace_hierarchy",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_get_workspace_members",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_list_document_page_attachments",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_list_document_pages",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_merge_tasks",
+   "role": "destructive",
+   "guard_class": "destructive"
+  },
+  {
+   "tool": "mcp__clickup__clickup_move_task",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_remove_tag_from_task",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_remove_task_dependency",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_remove_task_from_list",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_remove_task_link",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_request_attachment_upload",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_resolve_assignees",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_search",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_search_reminders",
+   "role": "read",
+   "guard_class": null
+  },
+  {
+   "tool": "mcp__clickup__clickup_send_chat_message",
+   "role": "comment",
+   "guard_class": "comment"
+  },
+  {
+   "tool": "mcp__clickup__clickup_start_time_tracking",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_stop_time_tracking",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_comment",
+   "role": "comment",
+   "guard_class": "comment"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_document_page",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_folder",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_list",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_reminder",
+   "role": "write",
+   "guard_class": "tracker"
+  },
+  {
+   "tool": "mcp__clickup__clickup_update_task",
+   "role": "write",
+   "guard_class": "tracker",
+   "guard_class_status_only": "status"
+  }
+ ]
+}

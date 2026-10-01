@@ -1,9 +1,9 @@
 {
-  "description": "ticket guard for subagents: in a session where /kensei-toolkit:ticket is active, subagents may not commit, push or write to the tracker. subagent-guard.sh exits at once for main-session calls, unmarked sessions or a missing guard.py, so Python starts only for subagent calls in a ticket session.",
+  "description": "ticket guard for subagents: in a session where /kensei-toolkit:ticket is active, subagents may not commit, push, write to the tracker, send mail or chat messages, or start remote or scheduled work. subagent-guard.sh exits at once for main-session calls, unmarked sessions or a missing guard.py, so Python starts only for subagent calls in a ticket session.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Monitor|Agent|Write|Edit|NotebookEdit|Skill|SendMessage|mcp__.*",
+        "matcher": "Bash|PowerShell|Monitor|Agent|Write|Edit|NotebookEdit|Skill|SendMessage|RemoteTrigger|CronCreate|mcp__.*",
         "hooks": [
           {
             "type": "command",

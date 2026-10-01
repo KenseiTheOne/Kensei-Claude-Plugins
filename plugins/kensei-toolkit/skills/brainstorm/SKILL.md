@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Collaborative design dialogue before implementation — turns an idea into a validated design through focused questions, honest challenge, approach exploration, and incremental validation. Use when the user explicitly asks to brainstorm or design together — "brainstorm", "let's brainstorm", "help me design", "explore options for", «брейншторм», «давай побрейнштормим», "давай обсудим идею", "помоги спроектировать", "продумай со мной". Not for routine implementation requests or quick questions.
+description: Collaborative design dialogue before implementation — turns an idea into a validated design through focused questions, honest challenge, approach exploration, and incremental validation. Use when the user explicitly asks to brainstorm or design together — "brainstorm", "let's brainstorm", "help me design", "explore options for", «брейншторм», «побрейнштормим», "давай обсудим идею", "помоги спроектировать", "продумай со мной". Not for routine implementation requests or quick questions.
 argument-hint: "[topic or idea]"
 ---
 

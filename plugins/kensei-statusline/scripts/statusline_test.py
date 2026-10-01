@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for statusline.py, the wrapper and setup.py — run: python3 statusline_test.py"""
+"""Tests for statusline.py, usage.py, the wrapper, setup.py and setup-check.py — run: python3 statusline_test.py"""
 
 import atexit
 import hashlib
@@ -20,6 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "statusline.py")
 WRAPPER = os.path.join(HERE, "kensei-statusline-wrapper.py")
 SETUP = os.path.join(HERE, "..", "skills", "setup", "setup.py")
+SETUP_CHECK = os.path.join(HERE, "setup-check.py")
 sys.path.insert(0, HERE)
 # Every temp dir of the run (tempfile.mkdtemp() included) lives under one root removed at exit.
 tempfile.tempdir = tempfile.mkdtemp(prefix="statusline-test-")
@@ -27,6 +28,7 @@ atexit.register(shutil.rmtree, tempfile.tempdir, True)
 os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()  # caches go here, not to ~/.claude
 os.environ["KENSEI_STATUSLINE_NO_USAGE_FETCH"] = "1"
 import statusline  # noqa: E402
+import usage  # noqa: E402
 
 
 def write_jsonl(path, entries):
@@ -192,6 +194,35 @@ class ProjectStats(unittest.TestCase):
         self.assertIsNone(head)
         self.assertIsNone(statusline.get_project_stats(repo, head))
 
+    def test_staged_ahead_behind_and_empty_files(self):
+        clone = os.path.join(tempfile.mkdtemp(), "clone")
+        git(self.repo, "clone", "-q", self.repo, clone)
+        open(os.path.join(self.repo, "empty.txt"), "w").close()
+        git(self.repo, "add", "empty.txt")
+        git(self.repo, "commit", "-q", "-m", "upstream")
+        git(clone, "fetch", "-q")
+        git(clone, "rm", "-q", "a.txt")
+        open(os.path.join(clone, "c.txt"), "w").close()
+        git(clone, "add", "c.txt")
+        git(clone, "commit", "-q", "-m", "local")
+        open(os.path.join(clone, "b.txt"), "w").close()
+        git(clone, "add", "b.txt")
+        line, head = statusline.get_git_info(clone)
+        self.assertEqual(strip_ansi(line), "main │ ●1 │ ⇡1⇣1")
+        self.assertEqual(statusline.get_project_stats(clone, head), "1 files")  # no lines at all
+
+    def test_cache_keeps_the_newest_heads(self):
+        line, head = statusline.get_git_info(self.repo)
+        with mock.patch.object(statusline, "PROJECT_STATS_KEEP", 1):
+            statusline.get_project_stats(self.repo, "0" * 40)
+            statusline.get_project_stats(self.repo, head)
+        with open(statusline.PROJECT_STATS_CACHE) as f:
+            self.assertEqual(json.load(f), {head: [1, 3]})
+
+    def test_not_a_repository(self):
+        self.assertEqual(statusline.get_git_info(tempfile.mkdtemp()), (None, None))
+        self.assertIsNone(statusline.get_project_stats(tempfile.mkdtemp()))
+
 
 class Render(unittest.TestCase):
     def test_smoke(self):
@@ -284,6 +315,27 @@ class Render(unittest.TestCase):
     def test_in_process_render_minimal(self):
         self.assertEqual(self.render({}), ["? │ ░░░░░░░░░░ 0% │ ↑0 ↓0 │ ~$0.00"])
 
+    def test_in_process_render_limits_and_lines_changed(self):
+        repo = tempfile.mkdtemp()
+        git(repo, "init", "-q", "-b", "main")
+        lines = self.render({"cwd": repo, "cost": {"total_lines_added": 2},
+                             "rate_limits": {"seven_day": {"used_percentage": 5}}})
+        self.assertEqual(lines[1:], ["7d 5%", "main │ ✓ │ +2 -0"])
+
+    def test_in_process_bad_stdin(self):
+        with mock.patch.object(sys, "stdin", io.StringIO("")), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            statusline.main()
+        self.assertEqual(out.getvalue(), "...\n")
+
+    def test_subagent_transcript_with_bad_lines_or_missing(self):
+        path = os.path.join(tempfile.mkdtemp(), "agent-x.jsonl")
+        write_jsonl(path, [assistant("claude-opus-5-5", out=7)])
+        with open(path, "a") as f:
+            f.write('{"type": "assistant", broken\n')
+        self.assertEqual(statusline.parse_transcript(path)["claude-opus-5-5"]["output"], 7)
+        self.assertEqual(statusline.parse_transcript(path + ".gone"), {})
+
 
 class Formatting(unittest.TestCase):
     def test_parse_reset(self):
@@ -328,8 +380,8 @@ class UsageBase(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.cache = os.path.join(self.dir, "cache", "kensei-statusline", "usage.json")
         self.lock = self.cache + ".lock"
-        for patch in (mock.patch.object(statusline, "USAGE_CACHE", self.cache),
-                      mock.patch.object(statusline, "CONFIG_DIR", self.dir),
+        for patch in (mock.patch.object(usage, "USAGE_CACHE", self.cache),
+                      mock.patch.object(usage, "CONFIG_DIR", self.dir),
                       mock.patch.dict(os.environ)):
             patch.start()
             self.addCleanup(patch.stop)
@@ -349,7 +401,7 @@ class UsageBase(unittest.TestCase):
 
 class OAuthToken(UsageBase):
     def keychain(self, stdout, code=0):
-        return mock.patch.object(statusline.subprocess, "run", return_value=subprocess.CompletedProcess(
+        return mock.patch.object(usage.subprocess, "run", return_value=subprocess.CompletedProcess(
             [], code, stdout=stdout, stderr=""))
 
     @staticmethod
@@ -358,63 +410,63 @@ class OAuthToken(UsageBase):
                                              "expiresAt": (time.time() + expires_in) * 1000}})
 
     def test_keychain_service_name(self):
-        self.assertEqual(statusline.keychain_service(), "Claude Code-credentials")
+        self.assertEqual(usage.keychain_service(), "Claude Code-credentials")
         os.environ["CLAUDE_CONFIG_DIR"] = "/x/cfg"
         digest = hashlib.sha256(b"/x/cfg").hexdigest()[:8]
-        self.assertEqual(statusline.keychain_service(), f"Claude Code-credentials-{digest}")
+        self.assertEqual(usage.keychain_service(), f"Claude Code-credentials-{digest}")
         os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = ""  # set but empty: the default item
-        self.assertEqual(statusline.keychain_service(), "Claude Code-credentials")
+        self.assertEqual(usage.keychain_service(), "Claude Code-credentials")
 
     def test_keychain_token(self):
         with mock.patch.object(sys, "platform", "darwin"), self.keychain(self.creds()) as run:
-            self.assertEqual(statusline.read_oauth_token(), "tok")
+            self.assertEqual(usage.read_oauth_token(), "tok")
         self.assertIn("Claude Code-credentials", run.call_args[0][0])
 
     def test_expired_or_malformed_token_is_skipped(self):
         for raw in (self.creds(expires_in=30), self.creds(token=""), "{bad",
                     json.dumps({"claudeAiOauth": "x"}), json.dumps([1])):
             with mock.patch.object(sys, "platform", "darwin"), self.keychain(raw):
-                self.assertIsNone(statusline.read_oauth_token(), raw)
+                self.assertIsNone(usage.read_oauth_token(), raw)
 
     def test_credentials_file_when_keychain_has_nothing(self):
         with mock.patch.object(sys, "platform", "darwin"), self.keychain("", code=44):
-            self.assertIsNone(statusline.read_oauth_token())  # no file either
+            self.assertIsNone(usage.read_oauth_token())  # no file either
             with open(os.path.join(self.dir, ".credentials.json"), "w") as f:
                 f.write(self.creds(token="from-file"))
-            self.assertEqual(statusline.read_oauth_token(), "from-file")
+            self.assertEqual(usage.read_oauth_token(), "from-file")
         with mock.patch.object(sys, "platform", "darwin"), \
-                mock.patch.object(statusline.subprocess, "run", side_effect=OSError):
-            self.assertEqual(statusline.read_oauth_token(), "from-file")
+                mock.patch.object(usage.subprocess, "run", side_effect=OSError):
+            self.assertEqual(usage.read_oauth_token(), "from-file")
         with mock.patch.object(sys, "platform", "linux"), \
-                mock.patch.object(statusline.subprocess, "run") as run:
-            self.assertEqual(statusline.read_oauth_token(), "from-file")
+                mock.patch.object(usage.subprocess, "run") as run:
+            self.assertEqual(usage.read_oauth_token(), "from-file")
         run.assert_not_called()
 
 
 class UsageCache(UsageBase):
     def test_missing_broken_or_odd_cache_reads_empty(self):
-        self.assertEqual(statusline.load_usage_cache(), {})
+        self.assertEqual(usage.load_usage_cache(), {})
         os.makedirs(os.path.dirname(self.cache))
         with open(self.cache, "w") as f:
             f.write("{bad")
-        self.assertEqual(statusline.load_usage_cache(), {})
+        self.assertEqual(usage.load_usage_cache(), {})
         self.write_cache([1, 2])
-        self.assertEqual(statusline.load_usage_cache(), {})
+        self.assertEqual(usage.load_usage_cache(), {})
 
     def test_far_future_times_and_bad_rows_are_dropped(self):
         now = time.time()
         self.write_cache({"fetched_at": now + 10 ** 6, "next_try": "soon", "rows": {"a": 1}})
-        self.assertEqual(statusline.load_usage_cache(), {})
+        self.assertEqual(usage.load_usage_cache(), {})
         self.write_cache({"fetched_at": now, "next_try": now + 600, "rows": []})
-        self.assertEqual(statusline.load_usage_cache(),
+        self.assertEqual(usage.load_usage_cache(),
                          {"fetched_at": now, "next_try": now + 600, "rows": []})
 
     def test_save_leaves_no_temp_file_on_error(self):
-        statusline.save_usage_cache({"rows": []})
+        usage.save_usage_cache({"rows": []})
         self.assertEqual(self.read_cache(), {"rows": []})
-        with mock.patch.object(statusline.os, "replace", side_effect=OSError("disk")):
+        with mock.patch.object(usage.os, "replace", side_effect=OSError("disk")):
             with self.assertRaises(OSError):
-                statusline.save_usage_cache({"rows": [1]})
+                usage.save_usage_cache({"rows": [1]})
         self.assertEqual(os.listdir(os.path.dirname(self.cache)), ["usage.json"])
 
 
@@ -425,8 +477,8 @@ class RefreshUsage(UsageBase):
     def setUp(self):
         super().setUp()
         self.now = 1_800_000_000.0
-        for patch in (mock.patch.object(statusline.time, "time", return_value=self.now),
-                      mock.patch.object(statusline, "read_oauth_token", return_value="tok")):
+        for patch in (mock.patch.object(usage.time, "time", return_value=self.now),
+                      mock.patch.object(usage, "read_oauth_token", return_value="tok")):
             patch.start()
             self.addCleanup(patch.stop)
         self.old_rows = [fable_row(5)]
@@ -442,7 +494,7 @@ class RefreshUsage(UsageBase):
         """Every refresh arms the os._exit deadline and disarms it on the way out."""
         runs = self.timer.call_count
         self.assertGreater(runs, 0)
-        self.timer.assert_called_with(statusline.REFRESH_DEADLINE, os._exit, (1,))
+        self.timer.assert_called_with(usage.REFRESH_DEADLINE, os._exit, (1,))
         self.assertEqual(self.timer.return_value.start.call_count, runs)
         self.assertEqual(self.timer.return_value.cancel.call_count, runs)
 
@@ -461,22 +513,22 @@ class RefreshUsage(UsageBase):
             return mock.Mock(open=open_)
 
         with mock.patch("urllib.request.build_opener", side_effect=build_opener):
-            statusline.refresh_usage()
+            usage.refresh_usage()
         self.assertFalse(os.path.exists(self.lock), "the lock is released")
         return seen, self.read_cache()
 
     def http_error(self, code):
-        return urllib.error.HTTPError(statusline.USAGE_URL, code, "x", {}, None)
+        return urllib.error.HTTPError(usage.USAGE_URL, code, "x", {}, None)
 
     def test_success_replaces_rows(self):
         seen, cache = self.refresh({"limits": [fable_row(11), "junk", None]})
-        self.assertEqual(cache, {"fetched_at": self.now, "next_try": self.now + statusline.USAGE_TTL,
+        self.assertEqual(cache, {"fetched_at": self.now, "next_try": self.now + usage.USAGE_TTL,
                                  "rows": [fable_row(11)]})
         req = seen["request"]
-        self.assertEqual(req.full_url, statusline.USAGE_URL)
+        self.assertEqual(req.full_url, usage.USAGE_URL)
         self.assertEqual(req.get_header("Authorization"), "Bearer tok")
         # the next attempt is pushed back before the request goes out
-        self.assertEqual(seen["cache_during"]["next_try"], self.now + statusline.ERROR_BACKOFF)
+        self.assertEqual(seen["cache_during"]["next_try"], self.now + usage.ERROR_BACKOFF)
         self.assertEqual(seen["cache_during"]["error"], "interrupted")
         # redirects are refused, so the token never leaves api.anthropic.com
         handler = seen["handlers"][0]()
@@ -489,7 +541,7 @@ class RefreshUsage(UsageBase):
             self.assertEqual(cache["rows"], [], body)
 
     def test_backoff_per_http_code(self):
-        for code, wait in ((401, 600), (403, 3600), (429, 900), (500, statusline.ERROR_BACKOFF)):
+        for code, wait in ((401, 600), (403, 3600), (429, 900), (500, usage.ERROR_BACKOFF)):
             self.write_cache({"fetched_at": self.now - 400, "next_try": 0, "rows": self.old_rows})
             _, cache = self.refresh(error=self.http_error(code))
             self.assertEqual(cache["next_try"], self.now + wait, code)
@@ -500,25 +552,25 @@ class RefreshUsage(UsageBase):
     def test_network_error_keeps_only_the_type_name(self):
         _, cache = self.refresh(error=urllib.error.URLError("secret detail"))
         self.assertEqual(cache["error"], "URLError")
-        self.assertEqual(cache["next_try"], self.now + statusline.ERROR_BACKOFF)
+        self.assertEqual(cache["next_try"], self.now + usage.ERROR_BACKOFF)
         self.assertEqual(cache["rows"], self.old_rows)
 
     def test_bad_json_body(self):
         def open_(req, timeout):
             return FakeResponse(b"<html>")
         with mock.patch("urllib.request.build_opener", return_value=mock.Mock(open=open_)):
-            statusline.refresh_usage()
+            usage.refresh_usage()
         cache = self.read_cache()
         self.assertEqual(cache["error"], "JSONDecodeError")
         self.assertEqual(cache["rows"], self.old_rows)
 
     def test_no_token_drops_rows(self):
-        with mock.patch.object(statusline, "read_oauth_token", return_value=None):
+        with mock.patch.object(usage, "read_oauth_token", return_value=None):
             seen, cache = self.refresh({"limits": []})
         self.assertNotIn("request", seen)
         self.assertEqual(cache["rows"], [])
         self.assertEqual(cache["error"], "no valid token")
-        self.assertEqual(cache["next_try"], self.now + statusline.BACKOFF[401])
+        self.assertEqual(cache["next_try"], self.now + usage.BACKOFF[401])
 
     def test_not_due_yet_sends_nothing(self):
         self.write_cache({"next_try": self.now + 100, "rows": self.old_rows})
@@ -527,50 +579,70 @@ class RefreshUsage(UsageBase):
         self.assertEqual(cache, {"next_try": self.now + 100, "rows": self.old_rows})
 
     def test_unexpected_failure_still_backs_off(self):
-        with mock.patch.object(statusline, "read_oauth_token", side_effect=RuntimeError("boom")):
-            statusline.refresh_usage()
+        with mock.patch.object(usage, "read_oauth_token", side_effect=RuntimeError("boom")):
+            usage.refresh_usage()
         cache = self.read_cache()
         self.assertEqual(cache["error"], "RuntimeError")
-        self.assertEqual(cache["next_try"], self.now + statusline.ERROR_BACKOFF)
+        self.assertEqual(cache["next_try"], self.now + usage.ERROR_BACKOFF)
         self.assertFalse(os.path.exists(self.lock))
 
 
 class MaybeRefresh(UsageBase):
     def setUp(self):
         super().setUp()
-        patch = mock.patch.object(statusline.subprocess, "Popen")
+        patch = mock.patch.object(usage.subprocess, "Popen")
         self.popen = patch.start()
         self.addCleanup(patch.stop)
 
     def test_due_cache_spawns_one_detached_refresh(self):
-        statusline.maybe_refresh_usage({})
+        usage.maybe_refresh_usage({})
         self.popen.assert_called_once()
         args, kwargs = self.popen.call_args
-        self.assertEqual(args[0][1:], [os.path.abspath(statusline.__file__), "--refresh-usage"])
+        self.assertEqual(args[0][1:], [os.path.abspath(usage.__file__), "--refresh-usage"])
         self.assertTrue(kwargs.get("start_new_session") or kwargs.get("creationflags"))
         self.assertTrue(os.path.exists(self.lock))
-        statusline.maybe_refresh_usage({})  # a second render while it runs: the lock holds
+        usage.maybe_refresh_usage({})  # a second render while it runs: the lock holds
         self.popen.assert_called_once()
 
     def test_stale_lock_is_taken_over(self):
         os.makedirs(os.path.dirname(self.lock))
         open(self.lock, "w").close()
-        old = time.time() - statusline.REFRESH_LOCK_TTL - 5
+        old = time.time() - usage.REFRESH_LOCK_TTL - 5
         os.utime(self.lock, (old, old))
-        statusline.maybe_refresh_usage({})
+        usage.maybe_refresh_usage({})
         self.popen.assert_called_once()
         self.assertGreater(os.path.getmtime(self.lock), old + 1)
 
     def test_not_due_or_switched_off(self):
-        statusline.maybe_refresh_usage({"next_try": time.time() + 60})
+        usage.maybe_refresh_usage({"next_try": time.time() + 60})
         os.environ["KENSEI_STATUSLINE_NO_USAGE_FETCH"] = "1"
-        statusline.maybe_refresh_usage({})
+        usage.maybe_refresh_usage({})
         self.popen.assert_not_called()
         self.assertFalse(os.path.exists(self.lock))
 
     def test_spawn_failure_is_silent(self):
         self.popen.side_effect = OSError("no exec")
-        statusline.maybe_refresh_usage({})
+        usage.maybe_refresh_usage({})
+
+
+class RefreshCommand(UsageBase):
+    def test_spawned_command_runs_a_refresh(self):
+        """The command maybe_refresh_usage spawns, run for real: with no login it records the
+        missing token and sends nothing."""
+        # a fresh config dir has no .credentials.json, and its keychain item does not exist
+        config = tempfile.mkdtemp()
+        with mock.patch.object(usage.subprocess, "Popen") as popen:
+            usage.maybe_refresh_usage({})
+        cmd = popen.call_args[0][0]
+        # both variables point at the empty config dir, so the keychain item never resolves
+        # to a real login and no request goes out
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=config, CLAUDE_SECURESTORAGE_CONFIG_DIR=config)
+        out = subprocess.run(cmd, env=env,
+                             capture_output=True, text=True, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(os.path.join(config, "cache", "kensei-statusline", "usage.json")) as f:
+            cache = json.load(f)
+        self.assertEqual((cache["error"], cache["rows"]), ("no valid token", []))
 
 
 class ServerRows(UsageBase):
@@ -578,7 +650,7 @@ class ServerRows(UsageBase):
 
     def setUp(self):
         super().setUp()
-        patch = mock.patch.object(statusline.subprocess, "Popen")
+        patch = mock.patch.object(usage.subprocess, "Popen")
         self.popen = patch.start()
         self.addCleanup(patch.stop)
         self.stdin = {"rate_limits": {"five_hour": {"used_percentage": 24, "resets_at": FUTURE},
@@ -611,7 +683,7 @@ class ServerRows(UsageBase):
         self.assertRegex(self.line(), r"^5h 7% ↻ \d\d:\d\d · 7d 41% · Fable 11%")
 
     def test_stale_cache_is_not_shown(self):
-        self.rows(fable_row(11), age=statusline.USAGE_MAX_AGE + 1)
+        self.rows(fable_row(11), age=usage.USAGE_MAX_AGE + 1)
         self.assertEqual(self.line(), "5h 24% ↻ " + datetime.fromtimestamp(FUTURE).strftime("%H:%M")
                          + " · 7d 41%")
         self.rows(fable_row(11), age=-120)  # fetched "in the future": a clock jump
@@ -667,9 +739,9 @@ def make_install(cache, version, orphaned=False, marker="ok"):
 
 
 class Wrapper(unittest.TestCase):
-    def run_wrapper(self, config, cwd=None):
+    def run_wrapper(self, config, cwd=None, wrapper=WRAPPER):
         env = dict(os.environ, CLAUDE_CONFIG_DIR=config)
-        return subprocess.run([sys.executable, WRAPPER], input="{}", capture_output=True,
+        return subprocess.run([sys.executable, wrapper], input="{}", capture_output=True,
                               text=True, env=env, cwd=cwd or config, timeout=10).stdout.strip()
 
     def test_installed_plugins_wins_over_highest_cache_version(self):
@@ -706,6 +778,38 @@ class Wrapper(unittest.TestCase):
 
     def test_not_installed(self):
         self.assertIn("not installed", self.run_wrapper(tempfile.mkdtemp()))
+
+    def test_runs_the_real_scripts_from_another_directory(self):
+        """The wrapper installed where setup.py puts it runs the real scripts with runpy,
+        which leaves their directory off sys.path; statusline.py must still import usage.py."""
+        config = tempfile.mkdtemp()
+        cache = os.path.join(config, "plugins", "cache", "kensei-claude-plugins", "kensei-statusline")
+        install = os.path.join(cache, "2.0.1")
+        os.makedirs(os.path.join(install, "scripts"))
+        for name in ("statusline.py", "usage.py"):
+            shutil.copy(os.path.join(HERE, name), os.path.join(install, "scripts", name))
+        installed = os.path.join(config, "scripts", "kensei-statusline.py")
+        os.makedirs(os.path.dirname(installed))
+        shutil.copy(WRAPPER, installed)
+        line = self.run_wrapper(config, wrapper=installed)
+        self.assertTrue(strip_ansi(line).startswith("? │"), line)
+        # usage.py failing to import only drops rows, so check the import itself, the same way
+        check = subprocess.run([sys.executable, "-c",
+                                "import runpy, sys; g = runpy.run_path(sys.argv[1]); "
+                                "sys.exit(g['usage'] is None)",
+                                os.path.join(install, "scripts", "statusline.py")],
+                               cwd=config, capture_output=True, text=True, timeout=10)
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_missing_usage_module_drops_only_the_server_rows(self):
+        install = tempfile.mkdtemp()
+        shutil.copy(os.path.join(HERE, "statusline.py"), install)
+        out = subprocess.run([sys.executable, os.path.join(install, "statusline.py")],
+                             input=json.dumps({"rate_limits": {"five_hour": {"used_percentage": 24}}}),
+                             capture_output=True, text=True, cwd=install, timeout=10,
+                             env=dict(os.environ, CLAUDE_CONFIG_DIR=tempfile.mkdtemp()))
+        self.assertEqual(out.stderr, "")
+        self.assertIn("5h 24%", strip_ansi(out.stdout))
 
 
 class Setup(unittest.TestCase):
@@ -793,11 +897,40 @@ class Setup(unittest.TestCase):
         config = tempfile.mkdtemp()
         with open(os.path.join(config, "settings.json"), "w") as f:
             f.write("{broken")
-        code, report = self.run_setup(config)
-        self.assertEqual(code, 1)
-        self.assertIn("error", report)
+        for args in (["--dry-run"], []):
+            code, report = self.run_setup(config, *args)
+            self.assertEqual(code, 1, args)
+            self.assertIn("error", report)
         with open(os.path.join(config, "settings.json")) as f:
             self.assertEqual(f.read(), "{broken")
+
+
+class SetupCheck(unittest.TestCase):
+    """The SessionStart hook: an offer only while no statusLine is set and none was declined."""
+
+    def run_check(self, files):
+        config = tempfile.mkdtemp()
+        for name, content in files.items():
+            with open(os.path.join(config, name), "w") as f:
+                f.write(content)
+        out = subprocess.run([sys.executable, SETUP_CHECK], capture_output=True, text=True,
+                             env=dict(os.environ, CLAUDE_CONFIG_DIR=config), timeout=10)
+        self.assertEqual((out.returncode, out.stderr), (0, ""))
+        return config, out.stdout
+
+    def test_offers_setup_when_nothing_is_configured(self):
+        for files in ({}, {"settings.json": "{broken"}, {"settings.json": "[1]"},
+                      {"settings.json": json.dumps({"model": "opus"})}):
+            config, out = self.run_check(files)
+            self.assertIn("/kensei-statusline:setup", out, files)
+            self.assertIn(os.path.join(config, ".statusline-no-setup"), out)
+
+    def test_silent_when_configured_or_declined(self):
+        line = json.dumps({"statusLine": {"type": "command", "command": "x"}})
+        for files in ({"settings.json": line}, {"settings.local.json": line},
+                      {"settings.json": "{broken", "settings.local.json": line},
+                      {".statusline-no-setup": ""}):
+            self.assertEqual(self.run_check(files)[1], "", files)
 
 
 if __name__ == "__main__":

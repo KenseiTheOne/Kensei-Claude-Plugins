@@ -380,6 +380,50 @@ class AfterCommit(unittest.TestCase):
         self.assertNotIn("Nothing uncommitted", out)
         self.assertEqual(list(by_path(run_dir)), ["a.txt"])
 
+    def test_unrelated_history_is_skipped(self):
+        path = repo({"a.txt": "a\n"})
+        git(path, "checkout", "-q", "--orphan", "pages")
+        git(path, "rm", "-rqf", ".")
+        write(path, "index.html", "x\n")
+        git(path, "add", "index.html")
+        git(path, "commit", "-qm", "pages")
+        code, out, _ = run(path, "collect", "--out-root", OUT)
+        lines = out.strip().splitlines()
+        self.assertEqual((code, lines[0]), (0, "No changes."))
+        self.assertEqual(len(lines), 2, out)
+        self.assertIn("HEAD shares no history with main, so nothing is shown", lines[1])
+        self.assertIn("pass a ref or range", lines[1])
+        # an explicit ref still works on the orphan branch: main's file removed, index.html added
+        code, out, err = run(path, "collect", "main", "--out-root", OUT)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("shares no history", out)
+
+    def test_pushed_orphan_branch_still_says_why(self):
+        # `git push -u origin lone`: the upstream is HEAD itself, main and origin/main unrelated
+        path = repo({"a.txt": "a\n"})
+        remote = tempfile.mkdtemp(prefix="difftour-remote-")
+        self.addCleanup(shutil.rmtree, remote, True)
+        git(remote, "init", "-q", "--bare")
+        git(path, "remote", "add", "origin", remote)
+        git(path, "push", "-q", "origin", "main")
+        git(path, "checkout", "-q", "--orphan", "lone")
+        git(path, "rm", "-rqf", ".")
+        write(path, "index.html", "x\n")
+        git(path, "add", "index.html")
+        git(path, "commit", "-qm", "lone")
+        git(path, "push", "-q", "-u", "origin", "lone")
+        code, out, _ = run(path, "collect", "--out-root", OUT)
+        lines = out.strip().splitlines()
+        self.assertEqual((code, lines[0]), (0, "No changes."))
+        self.assertEqual(len(lines), 2, out)
+        self.assertIn("HEAD shares no history with main, origin/main", lines[1])
+
+    def test_related_but_up_to_date_says_nothing_of_history(self):
+        path = feature_branch()
+        git(path, "checkout", "-q", "main")
+        code, out, _ = run(path, "collect", "--out-root", OUT)
+        self.assertEqual((code, out.strip()), (0, "No changes."))
+
     def test_explicit_ref_never_falls_back(self):
         path = feature_branch()
         code, out, _ = run(path, "collect", "HEAD", "--out-root", OUT)
@@ -411,6 +455,20 @@ class RunDirectories(unittest.TestCase):
         self.assertEqual(len(runs), difftour.KEEP_RUNS)
         self.assertNotIn("20200101-000000", runs)            # the oldest went first
         self.assertIn(f"20200101-0000{difftour.KEEP_RUNS + 2:02d}", runs)
+
+    def test_out_root_runs_live_outside_the_default_cache(self):
+        path = repo({"a.txt": "a\n"})
+        write(path, "a.txt", "b\n")
+        kept = os.path.join(tempfile.mkdtemp(), "ticket-run")
+        code, out, err = run(path, "collect", "HEAD", "--out-root", kept)
+        self.assertEqual(code, 0, err)
+        page_dir = out.splitlines()[0].split(": ", 1)[1]
+        self.assertTrue(page_dir.startswith(kept + os.sep))
+        self.assertFalse(page_dir.startswith(difftour.OUT_ROOT + os.sep))
+        cache = os.path.join(tempfile.mkdtemp(), "cache")
+        for _ in range(difftour.KEEP_RUNS + 2):
+            self.assertEqual(run(path, "collect", "--out-root", cache)[0], 0)
+        self.assertTrue(os.path.isfile(os.path.join(page_dir, "hunks.json")))
 
     def test_new_directories_are_private(self):
         root = os.path.join(tempfile.mkdtemp(), "a", "cache")
@@ -624,6 +682,97 @@ NOTES = {"lang": "ru", "title": "Правки", "lede": "Абзац",
          "unexplained": {"h2": "поменял b"}}
 
 
+GOLDEN_PATCH = """\
+diff --git a/src/Npc.cs b/src/Npc.cs
+index 1111111..2222222 100644
+--- a/src/Npc.cs
++++ b/src/Npc.cs
+@@ -1,6 +1,6 @@ class Npc
+ void Tick()
+ {
+-    if (d < minDist)
++    if (!sp.InSafeZone && d < minDist)
+         Aggro(sp);
+     Debug.Log("<tick> & 'x'");
+ }
+@@ -20,5 +20,7 @@ void Fire()
+ a();
+-first();
+-second();
+-third();
++first();
++second();
++third();
++Debug.Log("x");\r
++tail\r
+ b();
+\\ No newline at end of file
+diff --git a/tests/NpcTests.cs b/tests/NpcTests.cs
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/tests/NpcTests.cs
+@@ -0,0 +1,2 @@
++[Test] public void SafeZone() {}
++// mid\rline
+diff --git a/old.txt b/old.txt
+deleted file mode 100644
+index 4444444..0000000
+--- a/old.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+diff --git a/img.png b/img.png
+index 5555555..6666666 100644
+Binary files a/img.png and b/img.png differ
+diff --git a/a b.txt b/dir/c d.txt
+similarity index 100%
+rename from a b.txt
+rename to dir/c d.txt
+diff --git a/run.sh b/run.sh
+old mode 100644
+new mode 100755
+diff --git a/package-lock.json b/package-lock.json
+index 7777777..8888888 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1 +1 @@
+-{}
++{"a": 1}
+"""
+
+GOLDEN_META = {
+    "root": "/repo", "repo": "repo", "branch": "feature/safe-zone",
+    "spec": {"mode": "worktree", "ref": "main", "sha": "a" * 40, "tip": "b" * 40,
+             "head": "c" * 40},
+    "patterns": difftour.DEFAULT_NOISE, "skipped": ["vendor/lib"], "sha256": "0" * 64,
+    "collected": "2026-10-01T12:34:56+03:00",
+}
+
+GOLDEN_NOTES = {
+    "lang": "ru", "title": "Моб **не агрится** в `safe zone`",
+    "lede": "Что было <b>не так</b>\nи что делает `fix`.",
+    "link": {"url": "https://example.com/t/1?a=1&b=2", "label": "Task <1>"},
+    "panels": [{"title": "Что изменилось", "text": "1 файл, **2** теста"},
+               {"title": "Проверки", "checks": [
+                   {"pill": "6/6", "text": "тесты `green`"},
+                   {"pill": "не сделано", "text": "коммит", "warn": True}]}],
+    "files": [{"path": "tests/NpcTests.cs", "role": "тесты", "kind": "test"},
+              {"path": "src/Npc.cs", "kind": "prod"}],
+    "notes": [
+        {"unit": "h1", "after": "InSafeZone", "side": "new", "source": "session",
+         "text": "**Сам фикс.** `InSafeZone` first"},
+        {"unit": "h1", "source": "inferred", "kind": "decision", "text": "top note"},
+        {"unit": "h2", "after": "Debug.Log", "side": "new", "kind": "stray",
+         "source": "session", "text": "debug leftover"},
+        {"unit": "h3", "source": "session", "kind": "untested", "text": "new tests"},
+        {"unit": "h5", "source": "inferred", "kind": "temporary", "text": "binary"},
+        {"unit": "n1", "source": "inferred", "text": "lock"},
+    ],
+    "unexplained": {"h4": "deletes `old.txt`"},
+}
+
+
 class Build(unittest.TestCase):
 
     def test_page_and_report(self):
@@ -832,6 +981,23 @@ class Build(unittest.TestCase):
         self.assertEqual(json.loads(out.stdout), ['<span class="c">/* a</span>',
                                                   '<span class="c">b */</span>',
                                                   'x/y <span class="k">if</span>'])
+
+    def test_page_matches_the_golden_render(self):
+        """The page for a fixed input is byte-identical to testdata/golden-*.html. After an
+        intended change to the page, regenerate: DIFFTOUR_REGEN_GOLDEN=1 python3 difftour_test.py"""
+        for name, notes, drift in (("ru", GOLDEN_NOTES, "changed"),
+                                   ("en", dict(GOLDEN_NOTES, lang="en"), "git status failed")):
+            files = difftour.parse(GOLDEN_PATCH)
+            units = difftour.make_units(files, GOLDEN_META["patterns"])
+            self.assertEqual(difftour.validate(notes, files, units), [])
+            html, _ = difftour.render(GOLDEN_META, files, units, notes, drift, "/runs/repo/x")
+            path = os.path.join(HERE, "testdata", f"golden-{name}.html")
+            if os.environ.get("DIFFTOUR_REGEN_GOLDEN"):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(html)
+            with open(path, encoding="utf-8", newline="") as fh:
+                self.assertEqual(html, fh.read(), path)
 
     def test_open_bypasses_the_open_on_path(self):
         calls = []

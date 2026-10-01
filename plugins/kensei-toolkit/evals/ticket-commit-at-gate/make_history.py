@@ -42,7 +42,8 @@ def run_fixture():
     home = os.path.join(root, "home")
     cwd = os.path.join(home, "cwd")
     os.makedirs(cwd)
-    env = {"PATH": os.environ["PATH"], "HOME": home, "TMPDIR": root, "GIT_CONFIG_NOSYSTEM": "1"}
+    env = {"PATH": os.environ["PATH"], "HOME": home, "TMPDIR": root, "GIT_CONFIG_NOSYSTEM": "1",
+           "KENSEI_EVAL_GIT_CHECK": "off"}  # outside the sandbox any git will do
     try:
         subprocess.run(["bash", os.path.join(HERE, "fixture.sh")], cwd=cwd, env=env, check=True)
         run_md = open(os.path.join(home, ".claude/task-runs/cwd/LOCAL-17/RUN.md")).read()
