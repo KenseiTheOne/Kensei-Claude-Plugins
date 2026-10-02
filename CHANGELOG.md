@@ -241,6 +241,71 @@ bare «подтяни» / `git pull` needs `[reset]`, as in 2.0.0.
   refresh command, git states and rendering edge cases: 69 tests, about 95% line coverage of both
   scripts.
 
+## kensei-toolkit 2.1.0 — 2026-10
+
+### codex-img (new)
+- Generates or edits images through the Codex CLI's built-in image tool, on the user's ChatGPT
+  subscription — no OpenAI API key. `codex_img.py gen` makes one image under a chosen path (never
+  overwriting: `name.v2.png`); `batch` runs a JSON manifest one image after another.
+- Up to 5 reference images per call: a style reference keeps a series consistent, or the image to
+  edit. `--transparent` asks for a transparent background and checks the PNG really has alpha
+  (`no_alpha` otherwise; stdlib decoder, no Pillow).
+- The script does the deterministic work itself: the prompt goes to `codex exec` on stdin (no
+  `-i` swallowing and no cmd.exe quoting on Windows), the Codex agent runs in a read-only,
+  ephemeral session and only calls the image tool, and the image is taken from
+  `$CODEX_HOME/generated_images/<thread_id>/` by the id in the first `--json` event.
+- Stops a batch on the image limit, including the hidden `image_gen` limit that Codex reports only
+  in the agent's reply (`rate_limited`), on a Codex that will not start (`codex_failed`), and
+  after two turns in a row that end with a Codex error (`codex_failing`: auth expired mid-run). A
+  refusal that merely quotes the description ("a speed limit sign") is not mistaken for a limit.
+- Where each item went is recorded in `<manifest>.codex-img-state.json` (relative paths, written
+  atomically, so it survives a moved project or a crash mid-write). `--resume` skips an image
+  this manifest already made and redoes one that failed its check in place; a file the batch did
+  not write — the user's own `fire.png` — is never skipped or reported, and replaced only when
+  the item sets `"overwrite": true`. An unreadable state file stops `--resume` before Codex runs.
+- A timeout kills the whole Codex process tree (process group / `taskkill /T`) and keeps an image
+  that was saved before it, unless it was cut off mid-write (a PNG without its end is rejected).
+  Ctrl+C, SIGTERM or SIGHUP to the script (a background batch hitting its time limit) takes Codex
+  down too, so no orphaned turn keeps spending quota; SIGKILL cannot be caught.
+- Always answers with JSON: a malformed manifest (wrong types, `"false"` as a string, two items
+  with the same `out`, an `out` that is not `.png`) is `bad_manifest` before anything is spent, an
+  unexpected crash is `internal: …`. `--out` must be a `.png`; a free name is claimed atomically,
+  so parallel runs never write the same `name.vN.png`. On Windows an npm `codex.cmd` is bypassed
+  for `node codex.js` when found; otherwise reference paths with characters cmd.exe interprets are
+  passed as safe copies.
+- The skill confirms the cost before a series of 3+ images, runs it in the background, looks at
+  every result, retries at most twice per image and asks before generating an image nobody
+  asked for. Measured cost per image: ~50–90 s, ~30k input tokens of Codex quota (~70k with a
+  reference).
+- Limits, stated in the skill: the model, quality and size are Codex's choice (gpt-image-2 per
+  its source; GPT Image 2.5 Flare/Sunburst by name needs the API), no masks.
+- Requires Codex CLI 0.158+ (for `transparent_background`) signed in with ChatGPT on a paid plan.
+
+### svg-diagram (new)
+- Draws a README or docs diagram (architecture, data flow, pipeline, "how it works") as a
+  hand-built SVG in one dark gradient style: glowing gradient cards, labelled arrows, a dashed
+  amber "magic" path, takeaway badges. One SVG per README language from one `TEXT` dict, embedded
+  where the ASCII or mermaid diagram was, with a real-sentence `alt`.
+- The picture comes from a small generator script built on `diagram_kit.py` (stdlib only). The
+  skill copies the kit next to the generator, so the committed generator rebuilds the picture
+  without the plugin and survives a plugin update. `example.py` rebuilds the KenseiUnityMCP "How it
+  works" picture in English and Russian.
+- `--strict` estimates every string's width (SVG text never wraps; separate factors for Cyrillic
+  capitals) and reports text out of its card, box, pill or edge on both axes, a card shorter than
+  its lines need, text or shapes off the canvas and texts overlapping each other. It builds and
+  reports every language before it exits 1. Lines are not checked: a label crossed by an arrow is
+  left to the visual pass, and arrow labels are placed off the line along its normal so a
+  diagonal edge does not strike through its own label.
+- Every picture is rendered to PNG (headless Chrome or Edge, `CHROME=path` to choose one;
+  `rsvg-convert` as the fallback) and looked at before it is handed over. A failed or timed-out
+  render raises with the renderer's output and deletes the old PNG first, so a stale picture is
+  never mistaken for the new one. With no renderer the skill says the picture was not looked at.
+- Badges size themselves to the canvas (up to 300 px each, so 2–4 fit at 960 px); arrowhead
+  markers get valid ids for any ink colour.
+- `diagram_kit_test.py`: width estimate, both-axis layout checks, minimum card heights, badge
+  widths, arrow-label placement, marker ids, `--strict` across languages, renderer failures and
+  timeouts, and the reference example building clean; run by `scripts/check.sh`.
+
 ## kensei-toolkit 2.0.0 — 2026-10
 
 Breaking: `ticket --unattended` is removed (see Removed), `todo` no longer writes a `TODO.md` unless

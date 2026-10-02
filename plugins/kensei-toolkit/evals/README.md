@@ -6,6 +6,7 @@ account, so CI does not run them; run them by hand after a skill change and befo
 | Case | Tags | Checks | Guards against |
 |---|---|---|---|
 | `diff-tour-on-show-diff` | smoke | «Покажи дифф» invokes `diff-tour`; no raw diff in the reply | diff-tour not firing on request |
+| `svg-diagram-not-codex-img` | smoke | «Сделай картинкой схему из README» invokes `svg-diagram`, never `codex-img` | a diagram request going to the raster image skill, which spends Codex image quota |
 | `brainstorm-no-plan-mode` | smoke | brainstorm starts; `EnterPlanMode` / `ExitPlanMode` never called | brainstorm entering plan mode (fixed in 1.8.1) |
 | `ticket-commit-at-gate` | ticket, gate | Resumes a run stopped at the publish gate after a typed «закоммить»: exactly one commit, on the task branch, holding the two fixed files; no run notes staged or committed; no push, PR, merge or amend | run notes committed; publishing more than «закоммить» ordered |
 | `ticket-stops-at-criteria` | ticket | Context agent is `general-purpose` and told to write `01-context.md`; criteria put to the user; no source edits (Edit or Write), commit, push, or `.task-runs` in the repo | context agent unable to write its file; run notes committed |
@@ -18,7 +19,7 @@ account, so CI does not run them; run them by hand after a skill change and befo
 From `plugins/kensei-toolkit`:
 
 ```bash
-# cheap: two smoke cases, one run each, no baseline arm
+# cheap: three smoke cases, one run each, no baseline arm
 claude plugin eval . --tag smoke --scaffold --judge-model opus --runs 1 --ablation none \
   --no-publish
 

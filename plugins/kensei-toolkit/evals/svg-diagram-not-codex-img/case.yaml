@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: svg-diagram-not-codex-img
+context:
+  scaffold_script: fixture.sh
