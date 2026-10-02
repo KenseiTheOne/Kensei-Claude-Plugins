@@ -84,7 +84,8 @@ plugins/kensei-toolkit/
                                              assets/ (page template, CSS, JS),
                                              testdata/ (golden pages)
   skills/brainstorm/                       — SKILL.md
-  skills/codex-img/                        — SKILL.md, codex_img.py + codex_img_test.py
+  skills/codex-img/                        — SKILL.md, README.md (why a skill, not an MCP),
+                                             codex_img.py + codex_img_test.py
   skills/svg-diagram/                      — SKILL.md, diagram_kit.py + diagram_kit_test.py,
                                              example.py (reference diagram)
   skills/unity-review/                     — SKILL.md, lenses.md (read by the reviewer agents)
